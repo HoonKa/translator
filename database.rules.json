@@ -1,0 +1,13 @@
+{
+  "rules": {
+    "rooms": {
+      "$room": {
+        ".read": true,
+        ".write": "auth != null && (!data.exists() || data.child('meta/owner').val() === auth.uid)",
+        "meta": {
+          "owner": { ".validate": "newData.val() === auth.uid" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>수업 실시간 번역</title>
+<link rel="manifest" href="manifest.webmanifest">
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --dim:#9aa3b2; --accent:#4f8cff; --ok:#2ecc71; --warn:#f5a623; --bad:#ff5c5c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: "Segoe UI","Malgun Gothic",system-ui,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:18px; margin:0; font-weight:600; }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:var(--card); border:1px solid var(--line); font-size:13px; color:var(--dim); }
+  .dot { width:9px; height:9px; border-radius:50%; background:#555; }
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
+  main { display:grid; grid-template-columns: 340px 1fr; gap:16px; padding:16px 20px; max-width:1300px; margin:0 auto; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .card h2 { font-size:14px; color:var(--dim); margin:0 0 10px; font-weight:600; }
+  button { font:inherit; cursor:pointer; border-radius:10px; border:1px solid var(--line); background:#232836; color:var(--text); padding:8px 14px; }
+  button:hover { filter:brightness(1.15); }
+  #startBtn { width:100%; padding:18px; font-size:20px; font-weight:700; background:var(--accent); border:none; color:white; }
+  #startBtn.stop { background:var(--bad); }
+  #startBtn:disabled { opacity:.5; cursor:default; }
+  #qr { background:white; border-radius:10px; padding:10px; display:flex; justify-content:center; }
+  #qr img, #qr svg { width:100%; height:auto; max-width:280px; image-rendering:pixelated; }
+  .code { font-size:30px; letter-spacing:6px; font-weight:800; text-align:center; margin:10px 0 2px; }
+  .url { font-size:12px; color:var(--dim); text-align:center; word-break:break-all; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  label { display:block; font-size:13px; color:var(--dim); margin:12px 0 4px; }
+  input[type=password], input[type=text], select { width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:#10131a; color:var(--text); font:inherit; }
+  .langs { display:flex; flex-wrap:wrap; gap:6px 12px; }
+  .langs label { display:flex; gap:6px; align-items:center; margin:0; color:var(--text); font-size:14px; }
+  #meter { height:8px; background:#10131a; border-radius:4px; overflow:hidden; margin-top:10px; }
+  #meter div { height:100%; width:0; background:var(--ok); transition: width .1s; }
+  .captions { min-height:200px; max-height:52vh; overflow:auto; font-size:20px; line-height:1.5; }
+  .captions p { margin:0 0 8px; }
+  .captions .partial { color:var(--dim); }
+  .ko { font-size:16px; color:var(--dim); max-height:22vh; }
+  .msg { padding:10px 12px; border-radius:8px; margin-bottom:12px; font-size:14px; }
+  .msg.bad { background:#3a1717; border:1px solid #6b2525; }
+  .msg.warn { background:#3a2f17; border:1px solid #6b5625; }
+  .msg.info { background:#17263a; border:1px solid #25446b; }
+  details { margin-top:10px; } summary { cursor:pointer; color:var(--dim); font-size:13px; }
+  #log { font: 12px/1.4 Consolas, monospace; color:var(--dim); max-height:200px; overflow:auto; white-space:pre-wrap; }
+  #bigqr { position:fixed; inset:0; background:white; display:none; flex-direction:column; align-items:center; justify-content:center; z-index:10; color:#111; cursor:pointer; }
+  #bigqr .code { color:#111; font-size:64px; }
+  #bigqr svg, #bigqr img { width:min(70vh,80vw); height:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎙️ 수업 실시간 번역</h1>
+  <span class="pill"><span class="dot" id="aiDot"></span><span id="aiState">대기 중</span></span>
+  <span class="pill"><span class="dot" id="relayDot"></span><span id="relayState">자막 서버</span></span>
+  <span class="pill" id="timer" hidden>00:00:00</span>
+</header>
+<main>
+  <section>
+    <div id="msgs"></div>
+    <div class="card">
+      <button id="startBtn" disabled>수업 시작</button>
+      <div id="meter"><div></div></div>
+      <div class="url" id="micName" style="text-align:left;margin-top:6px"></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>학생 접속 (QR 코드를 찍으세요)</h2>
+      <div id="qr"></div>
+      <div class="code" id="roomCode">-----</div>
+      <div class="url" id="roomUrl"></div>
+      <div class="row">
+        <button id="bigQrBtn">크게 보기</button>
+        <button id="copyBtn">링크 복사</button>
+        <button id="newRoomBtn">새 방 만들기</button>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>설정</h2>
+      <label for="mode">번역 방식 (모두 무료)</label>
+      <select id="mode">
+        <option value="auto">자동: Gemini 무료 키 사용, 막히면 크롬 내장 번역으로 전환 (권장)</option>
+        <option value="gemini">Gemini만</option>
+        <option value="free">크롬 내장 번역만 (API 키 필요 없음, 기본 마이크 사용)</option>
+      </select>
+      <label for="apiKey">Gemini API 키 (이 PC에만 저장됩니다)</label>
+      <input id="apiKey" type="password" autocomplete="off" placeholder="AIza...">
+      <label for="mic">마이크</label>
+      <select id="mic"><option value="">기본 마이크</option></select>
+      <label>번역 언어 (학생이 휴대폰에서 고를 수 있어요)</label>
+      <div class="langs" id="langs"></div>
+      <details>
+        <summary>고급 설정</summary>
+        <label for="model">번역 모델</label>
+        <select id="model">
+          <option value="gemini-3.5-live-translate-preview">gemini-3.5-live-translate-preview (실시간 통역, 권장)</option>
+          <option value="gemini-3.8-live">gemini-3.8-live (일반 모델, 말이 끊길 때 번역)</option>
+        </select>
+        <div class="row"><button id="clearBtn">자막 기록 지우기</button><button id="dlBtn">자막 내려받기 (.txt)</button></div>
+        <label>연결 기록</label>
+        <div id="log"></div>
+      </details>
+    </div>
+  </section>
+  <section>
+    <div class="card">
+      <h2>번역 자막 (학생 화면과 같아요)</h2>
+      <div class="captions" id="out"></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>인식된 한국어</h2>
+      <div class="captions ko" id="src"></div>
+    </div>
+  </section>
+</main>
+<div id="bigqr" title="클릭하면 닫힙니다"><div id="bigqrImg"></div><div class="code" id="bigCode"></div><div id="bigUrl" style="font-size:20px"></div></div>
+<script type="module" src="js/teacher.js"></script>
+</body>
+</html>
