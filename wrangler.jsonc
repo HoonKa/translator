@@ -2,5 +2,5 @@
 {
   "name": "translator",
   "compatibility_date": "2025-09-01",
-  "assets": { "directory": "./", "not_found_handling": "none", "html_handling": "none" }
+  "assets": { "directory": "./", "not_found_handling": "none" }
 }
