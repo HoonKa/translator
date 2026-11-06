@@ -41,7 +41,8 @@ let translators = {};
 let notLiveSince = 0;
 let geminiRetryAt = 0;
 let probing = false;
-let cfg = null;         // { apiKey, model, langs }
+let cfg = null;         // { apiKey, tokenUrl, password, model, langs }
+const hasCred = () => !!(cfg && (cfg.apiKey || (cfg.tokenUrl && cfg.password)));
 const GEMINI_RETRY_MS = 15 * 60 * 1000;
 
 // ---------- UI helpers ----------
@@ -186,13 +187,28 @@ function makeSegmenter(lang) {
 }
 
 // ---------- Start / stop ----------
+async function fetchToken() {
+  let r;
+  try {
+    r = await fetch(cfg.tokenUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: cfg.password }) });
+  } catch (e) { throw new Error(`키 서버에 연결할 수 없어요 (${e.message})`); }
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) { const e = new Error('수업 비밀번호가 틀렸어요'); e.fatal = true; throw e; }
+  if (r.status === 403 || r.status === 500 || (r.status === 502 && /api key|permission/i.test(j.error || ''))) {
+    const e = new Error(`키 서버 설정 오류: ${j.error || r.status}`); e.fatal = true; throw e;
+  }
+  if (!r.ok || !j.token) throw new Error(j.error || `키 서버 오류 ${r.status}`);
+  return j.token;
+}
+
 function startGemini() {
   const { apiKey, model, langs } = cfg;
+  const getToken = cfg.tokenUrl && cfg.password ? fetchToken : undefined;
   segs = {};
   for (const l of langs) segs[l] = makeSegmenter(l);
   srcSeg = makeSegmenter('ko');
   links = langs.map((lang, i) => new TranslatorLink({
-    apiKey, model, lang, wantSource: i === 0, wsUrl: WS_OVERRIDE, ...FAST,
+    apiKey, getToken, model, lang, wantSource: i === 0, wsUrl: WS_OVERRIDE, ...FAST,
     onText: (d) => { if (engine === 'gemini') segs[lang].push(d); },
     onSource: (d) => { if (engine === 'gemini') srcSeg.push(d); },
     onStatus: () => updateAiStatus(),
@@ -235,7 +251,10 @@ async function start() {
   mode = $('mode').value;
   store.set('mode', mode);
   const apiKey = $('apiKey').value.trim();
-  if (mode === 'gemini' && !apiKey) { msg('Gemini API 키를 먼저 입력해 주세요.', 'warn', 'keyMsg'); $('apiKey').focus(); return; }
+  const tokenUrl = $('tokenUrl').value.trim();
+  const password = $('classPw').value;
+  const cred = apiKey || (tokenUrl && password);
+  if (mode === 'gemini' && !cred) { msg('관리자 설정에서 키 서버 주소와 비밀번호(또는 API 키)를 먼저 넣어 주세요.', 'warn', 'keyMsg'); $('adminBox').open = true; return; }
   if (mode !== 'gemini') {
     const sup = freeModeSupport();
     if (mode === 'free' && (!sup.speech || !sup.translator)) {
@@ -245,12 +264,14 @@ async function start() {
   }
   msg(null, '', 'keyMsg'); msg(null, '', 'aiErr'); msg(null, '', 'modeMsg');
   store.set('apiKey', apiKey);
+  store.set('tokenUrl', tokenUrl);
+  store.set('classPw', password);
   store.set('mic', $('mic').value);
   store.set('langs', langs.join(','));
   const model = $('model').value || TRANSLATE_MODEL;
   store.set('model', model);
   shownLang = langs[0];
-  cfg = { apiKey, model, langs };
+  cfg = { apiKey, tokenUrl, password, model, langs };
 
   $('startBtn').disabled = true;
   try {
@@ -265,7 +286,7 @@ async function start() {
   renderMics();
 
   notLiveSince = 0; probing = false;
-  if (mode === 'free' || (mode === 'auto' && !apiKey)) {
+  if (mode === 'free' || (mode === 'auto' && !cred)) {
     engine = 'free';
     geminiRetryAt = Infinity;
     startFree();
@@ -318,7 +339,7 @@ function autoSwitch(now) {
       if (!notLiveSince) notLiveSince = now;
       else if (now - notLiveSince > 20000) return switchToFree('20초 넘게 연결 안 됨');
     } else notLiveSince = 0;
-  } else if (engine === 'free' && cfg.apiKey && now >= geminiRetryAt) {
+  } else if (engine === 'free' && hasCred() && now >= geminiRetryAt) {
     if (!probing) { probing = true; log('Gemini 다시 시도'); startGemini(); return; }
     if (links.length && links.every(l => l.state === 'live')) {
       log('Gemini 복구됨: Gemini 번역으로 돌아갑니다');
@@ -400,6 +421,8 @@ function applySetupLink() {
   try {
     const c = JSON.parse(decodeURIComponent(escape(atob(decodeURIComponent(m[1])))));
     if (c.key !== undefined) store.set('apiKey', c.key);
+    if (c.tokenUrl !== undefined) store.set('tokenUrl', c.tokenUrl);
+    if (c.pw !== undefined) store.set('classPw', c.pw);
     if (c.langs) store.set('langs', c.langs);
     if (c.mode) store.set('mode', c.mode);
     if (c.model) store.set('model', c.model);
@@ -409,7 +432,9 @@ function applySetupLink() {
   return true;
 }
 function makeSetupLink() {
-  const c = { key: $('apiKey').value.trim(), langs: selectedLangs().join(','), mode: $('mode').value, model: $('model').value };
+  const tokenUrl = $('tokenUrl').value.trim(), pw = $('classPw').value;
+  const server = tokenUrl && pw;
+  const c = { key: server ? '' : $('apiKey').value.trim(), tokenUrl, pw, langs: selectedLangs().join(','), mode: $('mode').value, model: $('model').value };
   const enc = encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(c)))));
   const u = new URL(location.href); u.hash = `setup=${enc}`;
   return u.toString();
@@ -418,6 +443,8 @@ function makeSetupLink() {
 async function init() {
   const fromLink = applySetupLink();
   $('apiKey').value = store.get('apiKey', '');
+  $('tokenUrl').value = store.get('tokenUrl', '');
+  $('classPw').value = store.get('classPw', '');
   $('model').value = store.get('model', TRANSLATE_MODEL);
   $('mode').value = store.get('mode', 'auto');
   renderLangs();
@@ -439,10 +466,10 @@ async function init() {
   };
   $('dlBtn').onclick = download;
   $('setupLinkBtn').onclick = () => {
-    store.set('apiKey', $('apiKey').value.trim()); store.set('configured', '1');
+    store.set('apiKey', $('apiKey').value.trim()); store.set('tokenUrl', $('tokenUrl').value.trim()); store.set('classPw', $('classPw').value); store.set('configured', '1');
     navigator.clipboard.writeText(makeSetupLink()).then(() => msg('설정 링크를 복사했어요. 선생님 PC 크롬에서 한 번 열어주세요.', 'info', 'copied'));
   };
-  if (store.get('configured') !== '1' && !store.get('apiKey')) $('adminBox').open = true;
+  if (store.get('configured') !== '1' && !store.get('apiKey') && !store.get('tokenUrl')) $('adminBox').open = true;
   if (fromLink) msg('이 PC에 번역 설정을 저장했어요. 이제 이 페이지를 즐겨찾기 하고 "수업 시작"만 누르면 돼요.', 'info', 'setupOk');
   window.addEventListener('beforeunload', (e) => { if (running) { e.preventDefault(); e.returnValue = ''; } });
 

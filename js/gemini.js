@@ -13,6 +13,9 @@
 export const DEFAULT_WS =
   'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
+export const CONSTRAINED_WS =
+  'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
+
 export const TRANSLATE_MODEL = 'gemini-3.5-live-translate-preview';
 export const GENERAL_MODEL = 'gemini-3.8-live';
 
@@ -70,9 +73,22 @@ class Conn {
     this.readyAt = 0;
     this.dec = new TextDecoder();
   }
-  open(setupMsg) {
+  async open(setupMsg) {
     const L = this.link;
-    const url = `${L.wsUrl}?key=${encodeURIComponent(L.apiKey)}`;
+    let url;
+    if (L.getToken) {
+      // Key stays on the token server; we get a short-lived single-use token.
+      let token;
+      try { token = await L.getToken(); } catch (e) {
+        this.closed = true;
+        L._onClosed(this, e.fatal ? 4001 : 4000, e.message || 'token error');
+        return;
+      }
+      if (this.closed) return;
+      url = `${L.wsUrl || CONSTRAINED_WS}?access_token=${encodeURIComponent(token)}`;
+    } else {
+      url = `${L.wsUrl || DEFAULT_WS}?key=${encodeURIComponent(L.apiKey)}`;
+    }
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
@@ -121,13 +137,13 @@ class Conn {
   drain() {
     this.draining = true;
     try {
-      if (this.ws.readyState === 1) this.ws.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
+      if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
     } catch {}
     this.drainUntil = Date.now() + DRAIN_MS;
   }
   close() {
     this.closed = true;
-    try { this.ws.close(1000, 'done'); } catch {}
+    try { this.ws && this.ws.close(1000, 'done'); } catch {}
   }
 }
 
@@ -139,7 +155,7 @@ export class TranslatorLink {
    */
   constructor(opts) {
     Object.assign(this, opts);
-    this.wsUrl = opts.wsUrl || DEFAULT_WS;
+    this.wsUrl = opts.wsUrl;
     this.model = opts.model || TRANSLATE_MODEL;
     this.variantKey = `gl_variant_${this.model}`;
     this.variants = setupVariants(this.model, this.lang, this.wantSource);
@@ -271,7 +287,8 @@ export class TranslatorLink {
   _isFatal(code, reason) {
     const r = reason.toLowerCase();
     let msg = null;
-    if (r.includes('api key') || r.includes('api_key') || code === 1008 && r.includes('permission')) msg = 'API 키가 올바르지 않거나 권한이 없습니다.';
+    if (code === 4001) msg = `키 서버 오류: ${reason}`;
+    else if (r.includes('api key') || r.includes('api_key') || code === 1008 && r.includes('permission')) msg = 'API 키가 올바르지 않거나 권한이 없습니다.';
     else if (r.includes('not found') && r.includes('model')) msg = `모델(${this.model})을 찾을 수 없습니다.`;
     else if (r.includes('billing') || r.includes('quota') || r.includes('exceeded') || r.includes('resource_exhausted') || r.includes('rate limit')) msg = '사용량 한도 초과 또는 결제 설정이 필요합니다.';
     if (!msg) return false;
