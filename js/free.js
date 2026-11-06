@@ -1,5 +1,6 @@
 // Completely free mode: Chrome/Edge built-in speech recognition (Korean)
 // + Chrome/Edge built-in on-device translator. No API key needed.
+// Chrome's translator has no Burmese/Mongolian/Uzbek: those show nothing in this mode.
 // Limits: desktop Chrome 138+ / Edge, uses the default microphone, lower quality than Gemini.
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -10,13 +11,14 @@ export function freeModeSupport() {
 }
 
 /** Must be called right after a click (the browser needs a user action to download models). */
-export function prepareTranslators(langs, onProgress) {
+export function prepareTranslators(langs, src = 'ko', onProgress) {
   const out = {};
   if (!('Translator' in self)) return out;
   for (const lang of langs) {
     const targetLanguage = TR_CODE[lang] || lang;
+    if (targetLanguage === src) { out[lang] = Promise.resolve({ translate: async (t) => t }); continue; }
     out[lang] = Translator.create({
-      sourceLanguage: 'ko', targetLanguage,
+      sourceLanguage: src, targetLanguage,
       monitor(m) { m.addEventListener('downloadprogress', (e) => onProgress && onProgress(lang, e.loaded)); },
     }).catch((e) => { console.warn('translator', lang, e); return null; });
   }
@@ -52,7 +54,7 @@ export class FreeEngine {
     if (!this.running) return;
     const rec = new SR();
     this.rec = rec;
-    rec.lang = 'ko-KR';
+    rec.lang = this.srcLang === 'en' ? 'en-US' : 'ko-KR';
     rec.continuous = true;
     rec.interimResults = true;
     rec.onstart = () => { this.failures = 0; this._status('live'); };

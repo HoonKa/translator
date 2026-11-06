@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const code = (params.get('r') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const RELAY_KIND = params.get('relay') === 'mock' ? 'mock' : 'firebase';
-const NAMES = { en: 'English', ja: '日本語', 'zh-Hans': '中文', vi: 'Tiếng Việt', es: 'Español', fr: 'Français', de: 'Deutsch', ru: 'Русский', mn: 'Монгол', th: 'ไทย', id: 'Indonesia', uz: 'Oʻzbek', ko: '한국어 (original)' };
+const NAMES = { my: 'မြန်မာ', en: 'English', ja: '日本語', 'zh-Hans': '中文', vi: 'Tiếng Việt', es: 'Español', fr: 'Français', de: 'Deutsch', ru: 'Русский', mn: 'Монгол', th: 'ไทย', id: 'Indonesia', uz: 'Oʻzbek', ko: 'Original (원문)' };
 const store = {
   get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} },

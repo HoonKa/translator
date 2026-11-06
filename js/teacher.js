@@ -11,10 +11,10 @@ const WS_OVERRIDE = params.get('ws') || undefined; // testing only
 const FAST = params.get('fast') ? { softRotateMs: 15000, hardRotateMs: 25000 } : {};
 
 export const LANGS = [
-  ['en', 'English'], ['ja', '日本語'], ['zh-Hans', '中文(简体)'], ['vi', 'Tiếng Việt'],
-  ['es', 'Español'], ['fr', 'Français'], ['de', 'Deutsch'], ['ru', 'Русский'],
-  ['mn', 'Монгол'], ['th', 'ไทย'], ['id', 'Bahasa Indonesia'], ['uz', 'Oʻzbek'],
+  ['en', 'English'], ['my', 'မြန်မာ (미얀마어)'], ['vi', 'Tiếng Việt (베트남어)'],
+  ['mn', 'Монгол (몽골어)'], ['uz', 'Oʻzbek (우즈베크어)'],
 ];
+const DEFAULT_LANGS = 'en,my,vi,mn,uz';
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 const store = {
@@ -44,6 +44,7 @@ let probing = false;
 let cfg = null;         // { apiKey, tokenUrl, password, model, langs }
 const hasCred = () => !!(cfg && (cfg.apiKey || (cfg.tokenUrl && cfg.password)));
 const GEMINI_RETRY_MS = 15 * 60 * 1000;
+const srcLang = () => store.get('srcLang', 'ko');
 
 // ---------- UI helpers ----------
 function msg(text, kind = 'info', id) {
@@ -131,13 +132,13 @@ function selectedLangs() {
   return s.length ? s : ['en'];
 }
 function renderLangs() {
-  const saved = (store.get('langs', 'en') || 'en').split(',');
+  const saved = (store.get('langs2', DEFAULT_LANGS) || DEFAULT_LANGS).split(',');
   $('langs').innerHTML = '';
   for (const [code, name] of LANGS) {
     const l = document.createElement('label');
     l.innerHTML = `<input type="checkbox" value="${code}"> ${name}`;
     l.querySelector('input').checked = saved.includes(code);
-    l.querySelector('input').addEventListener('change', () => store.set('langs', selectedLangs().join(',')));
+    l.querySelector('input').addEventListener('change', () => store.set('langs2', selectedLangs().join(',')));
     $('langs').appendChild(l);
   }
 }
@@ -225,7 +226,7 @@ function stopGemini() {
 }
 function startFree() {
   free = new FreeEngine({
-    langs: cfg.langs, translators,
+    langs: cfg.langs, translators, srcLang: srcLang(),
     onPartial: (l, t) => { if (engine === 'free') emitPartial(l, t); },
     onFinal: (l, t) => { if (engine === 'free') emitFinal(l, t); },
     onStatus: () => updateAiStatus(),
@@ -260,14 +261,14 @@ async function start() {
     if (mode === 'free' && (!sup.speech || !sup.translator)) {
       msg('이 브라우저는 무료 모드를 지원하지 않아요. 최신 크롬(138 이상)이나 엣지를 써 주세요.', 'bad', 'keyMsg'); return;
     }
-    translators = prepareTranslators(langs, (l, p) => { if (p < 1) msg(`번역 모델 내려받는 중 (${l}) ${Math.round(p * 100)}%`, 'info', 'dl'); else msg(null, '', 'dl'); });
+    translators = prepareTranslators(langs, srcLang(), (l, p) => { if (p < 1) msg(`번역 모델 내려받는 중 (${l}) ${Math.round(p * 100)}%`, 'info', 'dl'); else msg(null, '', 'dl'); });
   }
   msg(null, '', 'keyMsg'); msg(null, '', 'aiErr'); msg(null, '', 'modeMsg');
   store.set('apiKey', apiKey);
   store.set('tokenUrl', tokenUrl);
   store.set('classPw', password);
   store.set('mic', $('mic').value);
-  store.set('langs', langs.join(','));
+  store.set('langs2', langs.join(','));
   const model = $('model').value || TRANSLATE_MODEL;
   store.set('model', model);
   shownLang = langs[0];
@@ -334,8 +335,14 @@ function onChunk({ b64, rms }) {
 
 function autoSwitch(now) {
   if (engine === 'gemini' && !probing) {
-    if (links.some(l => l.state === 'error')) return switchToFree('오류: ' + (links.find(l => l.state === 'error').detail || ''));
-    if (links.some(l => l.state !== 'live')) {
+    const errs = links.filter(l => l.state === 'error');
+    if (links[0] && links[0].state === 'error' || (links.length && errs.length === links.length)) return switchToFree('오류: ' + (errs[0].detail || ''));
+    // Another language failed alone (e.g. a usage limit): keep the others running and retry it in 2 minutes.
+    for (const l of errs) {
+      if (!l.retryAt) { l.retryAt = now + 120000; log(`[${l.lang}] 오류, 2분 뒤 다시 시도: ${l.detail}`); }
+      else if (now >= l.retryAt) { l.retryAt = 0; l.start(); }
+    }
+    if (links[0] && links[0].state !== 'live') {
       if (!notLiveSince) notLiveSince = now;
       else if (now - notLiveSince > 20000) return switchToFree('20초 넘게 연결 안 됨');
     } else notLiveSince = 0;
@@ -423,7 +430,7 @@ function applySetupLink() {
     if (c.key !== undefined) store.set('apiKey', c.key);
     if (c.tokenUrl !== undefined) store.set('tokenUrl', c.tokenUrl);
     if (c.pw !== undefined) store.set('classPw', c.pw);
-    if (c.langs) store.set('langs', c.langs);
+    if (c.langs) store.set('langs2', c.langs);
     if (c.mode) store.set('mode', c.mode);
     if (c.model) store.set('model', c.model);
     store.set('configured', '1');
@@ -452,8 +459,12 @@ async function init() {
   navigator.mediaDevices?.addEventListener?.('devicechange', renderMics);
 
   $('startBtn').onclick = () => (running ? stop() : start());
-  $('bigQrBtn').onclick = () => { $('bigqr').style.display = 'flex'; };
-  $('bigqr').onclick = () => { $('bigqr').style.display = 'none'; };
+  // Big QR: the browser's Back button closes it instead of leaving the page.
+  const showBig = (on) => { $('bigqr').style.display = on ? 'flex' : 'none'; };
+  $('bigQrBtn').onclick = () => { history.pushState({ bigqr: true }, ''); showBig(true); };
+  $('bigqr').onclick = () => { if (history.state && history.state.bigqr) history.back(); else showBig(false); };
+  window.addEventListener('popstate', () => showBig(!!(history.state && history.state.bigqr)));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('bigqr').style.display === 'flex') $('bigqr').click(); });
   $('copyBtn').onclick = () => navigator.clipboard.writeText(studentUrl(room)).then(() => msg('링크를 복사했어요.', 'info', 'copied'));
   $('newRoomBtn').onclick = async () => {
     if (running) { msg('수업 중에는 방을 바꿀 수 없어요.', 'warn', 'roomErr'); return; }
@@ -465,6 +476,17 @@ async function init() {
     $('out').innerHTML = ''; $('src').innerHTML = '';
   };
   $('dlBtn').onclick = download;
+  const showSrc = () => { $('srcBtn').textContent = srcLang() === 'ko' ? '말하는 언어: 한국어' : 'Speaking: English'; };
+  showSrc();
+  $('srcBtn').onclick = () => {
+    store.set('srcLang', srcLang() === 'ko' ? 'en' : 'ko');
+    showSrc();
+    if (running && free) {
+      // Restart the free engine with the new speaking language (the click lets the browser load translators).
+      translators = prepareTranslators(cfg.langs, srcLang());
+      free.stop(); free = null; startFree();
+    }
+  };
   $('setupLinkBtn').onclick = () => {
     store.set('apiKey', $('apiKey').value.trim()); store.set('tokenUrl', $('tokenUrl').value.trim()); store.set('classPw', $('classPw').value); store.set('configured', '1');
     navigator.clipboard.writeText(makeSetupLink()).then(() => msg('설정 링크를 복사했어요. 선생님 PC 크롬에서 한 번 열어주세요.', 'info', 'copied'));
