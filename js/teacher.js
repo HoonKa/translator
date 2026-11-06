@@ -443,7 +443,7 @@ function makeSetupLink() {
 async function init() {
   const fromLink = applySetupLink();
   $('apiKey').value = store.get('apiKey', '');
-  $('tokenUrl').value = store.get('tokenUrl', '');
+  $('tokenUrl').value = store.get('tokenUrl', '') || window.TOKEN_URL || '';
   $('classPw').value = store.get('classPw', '');
   $('model').value = store.get('model', TRANSLATE_MODEL);
   $('mode').value = store.get('mode', 'auto');
@@ -469,7 +469,7 @@ async function init() {
     store.set('apiKey', $('apiKey').value.trim()); store.set('tokenUrl', $('tokenUrl').value.trim()); store.set('classPw', $('classPw').value); store.set('configured', '1');
     navigator.clipboard.writeText(makeSetupLink()).then(() => msg('설정 링크를 복사했어요. 선생님 PC 크롬에서 한 번 열어주세요.', 'info', 'copied'));
   };
-  if (store.get('configured') !== '1' && !store.get('apiKey') && !store.get('tokenUrl')) $('adminBox').open = true;
+  if (store.get('configured') !== '1' && !store.get('apiKey') && !store.get('classPw')) $('adminBox').open = true;
   if (fromLink) msg('이 PC에 번역 설정을 저장했어요. 이제 이 페이지를 즐겨찾기 하고 "수업 시작"만 누르면 돼요.', 'info', 'setupOk');
   window.addEventListener('beforeunload', (e) => { if (running) { e.preventDefault(); e.returnValue = ''; } });
 

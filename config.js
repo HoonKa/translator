@@ -8,3 +8,6 @@ window.FIREBASE_CONFIG = {
   messagingSenderId: "702315761055",
   appId: "1:702315761055:web:33ea47ff27a72b9f4381aa"
 };
+
+// Cloudflare key server (keeps the Gemini API key secret).
+window.TOKEN_URL = "https://translatorkey.hookweb-f85.workers.dev";
