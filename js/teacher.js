@@ -393,7 +393,30 @@ function download() {
 }
 
 // ---------- Init ----------
+// A setup link (#setup=...) lets the administrator configure a teacher's PC once.
+function applySetupLink() {
+  const m = location.hash.match(/setup=([^&]+)/);
+  if (!m) return false;
+  try {
+    const c = JSON.parse(decodeURIComponent(escape(atob(decodeURIComponent(m[1])))));
+    if (c.key !== undefined) store.set('apiKey', c.key);
+    if (c.langs) store.set('langs', c.langs);
+    if (c.mode) store.set('mode', c.mode);
+    if (c.model) store.set('model', c.model);
+    store.set('configured', '1');
+  } catch (e) { console.warn('bad setup link', e); }
+  history.replaceState(null, '', location.pathname + location.search);
+  return true;
+}
+function makeSetupLink() {
+  const c = { key: $('apiKey').value.trim(), langs: selectedLangs().join(','), mode: $('mode').value, model: $('model').value };
+  const enc = encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(c)))));
+  const u = new URL(location.href); u.hash = `setup=${enc}`;
+  return u.toString();
+}
+
 async function init() {
+  const fromLink = applySetupLink();
   $('apiKey').value = store.get('apiKey', '');
   $('model').value = store.get('model', TRANSLATE_MODEL);
   $('mode').value = store.get('mode', 'auto');
@@ -415,6 +438,12 @@ async function init() {
     $('out').innerHTML = ''; $('src').innerHTML = '';
   };
   $('dlBtn').onclick = download;
+  $('setupLinkBtn').onclick = () => {
+    store.set('apiKey', $('apiKey').value.trim()); store.set('configured', '1');
+    navigator.clipboard.writeText(makeSetupLink()).then(() => msg('설정 링크를 복사했어요. 선생님 PC 크롬에서 한 번 열어주세요.', 'info', 'copied'));
+  };
+  if (store.get('configured') !== '1' && !store.get('apiKey')) $('adminBox').open = true;
+  if (fromLink) msg('이 PC에 번역 설정을 저장했어요. 이제 이 페이지를 즐겨찾기 하고 "수업 시작"만 누르면 돼요.', 'info', 'setupOk');
   window.addEventListener('beforeunload', (e) => { if (running) { e.preventDefault(); e.returnValue = ''; } });
 
   if (RELAY_KIND === 'firebase' && !window.FIREBASE_CONFIG) {

@@ -77,8 +77,8 @@
         <button id="newRoomBtn">새 방 만들기</button>
       </div>
     </div>
-    <div class="card" style="margin-top:16px">
-      <h2>설정</h2>
+    <details class="card" id="adminBox" style="margin-top:16px">
+      <summary style="font-size:14px;font-weight:600">⚙️ 관리자 설정 (선생님은 만지지 않아도 돼요)</summary>
       <label for="mode">번역 방식 (모두 무료)</label>
       <select id="mode">
         <option value="auto">자동: Gemini 무료 키 사용, 막히면 크롬 내장 번역으로 전환 (권장)</option>
@@ -102,7 +102,9 @@
         <label>연결 기록</label>
         <div id="log"></div>
       </details>
-    </div>
+      <div class="row"><button id="setupLinkBtn">선생님 PC용 설정 링크 복사</button></div>
+      <div class="url" style="text-align:left;margin-top:6px">이 링크를 선생님 PC 크롬에서 한 번 열면 위 설정(API 키 포함)이 그 PC에 저장돼요. 키가 들어 있으니 다른 사람에게 공유하지 마세요.</div>
+    </details>
   </section>
   <section>
     <div class="card">
