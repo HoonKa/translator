@@ -1,0 +1,6 @@
+// Cloudflare: serves this folder as a static website (teacher + student pages).
+{
+  "name": "translator",
+  "compatibility_date": "2025-09-01",
+  "assets": { "directory": "./", "not_found_handling": "none", "html_handling": "none" }
+}

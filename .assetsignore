@@ -1,0 +1,11 @@
+.git/
+.github
+node_modules
+worker
+wrangler.jsonc
+.assetsignore
+*.md
+firebase.json
+database.rules.json
+.git/**
+.wrangler
