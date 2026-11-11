@@ -26,7 +26,7 @@ export function prepareTranslators(langs, src = 'ko', onProgress) {
 }
 
 export class FreeEngine {
-  /** opts: { langs, translators (from prepareTranslators), onPartial(lang,t), onFinal(lang,t), onStatus(state, detail), onLog } */
+  /** opts: { langs, glossary: [{src,dst}], translators (from prepareTranslators), onPartial(lang,t), onFinal(lang,t), onStatus(state, detail), onLog } */
   constructor(opts) {
     Object.assign(this, opts);
     this.running = false;
@@ -88,6 +88,8 @@ export class FreeEngine {
   async _translate(lang, text) {
     const t = this.tr[lang];
     if (!t) return null;
+    // Glossary: put the wanted spelling into the sentence before translating (works best for names).
+    for (const g of this.glossary || []) if (g.src) text = text.split(g.src).join(g.dst);
     try { return await t.translate(text); } catch { return null; }
   }
   _final(ko) {

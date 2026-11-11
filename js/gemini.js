@@ -28,6 +28,27 @@ const SILENT_RMS = 0.012;
 
 // The docs show translationConfig / transcription settings in slightly
 // different places, so we try these in order and remember what works.
+// Glossary (names, school words) is sent as a system instruction. If the
+// server rejects that field, the variants without it are tried next.
+export function glossaryText(gloss) {
+  if (!gloss || !gloss.length) return '';
+  return 'Glossary for this class. When the speaker says one of these words, use exactly the given spelling or translation ' +
+    '(for other target languages, keep names as written and translate the given meaning):\n' +
+    gloss.map(g => `${g.src} => ${g.dst}`).join('\n');
+}
+function withGlossary(variants, gloss) {
+  const text = glossaryText(gloss);
+  if (!text) return variants;
+  const add = variants.map(v => {
+    const setup = { ...v.setup };
+    const prev = setup.systemInstruction ? setup.systemInstruction.parts[0].text + '\n\n' : '';
+    setup.systemInstruction = { parts: [{ text: prev + text }] };
+    return { setup };
+  });
+  // The general model already takes a system instruction, so no fallback is needed there.
+  return variants[0].setup.systemInstruction ? add : [...add, ...variants];
+}
+
 function setupVariants(model, lang, wantSource) {
   const m = `models/${model}`;
   const tr = { targetLanguageCode: lang, echoTargetLanguage: true };
@@ -157,8 +178,9 @@ export class TranslatorLink {
     Object.assign(this, opts);
     this.wsUrl = opts.wsUrl;
     this.model = opts.model || TRANSLATE_MODEL;
-    this.variantKey = `gl_variant_${this.model}`;
-    this.variants = setupVariants(this.model, this.lang, this.wantSource);
+    const g = opts.glossary && opts.glossary.length ? '_g' : '';
+    this.variantKey = `gl_variant_${this.model}${g}`;
+    this.variants = withGlossary(setupVariants(this.model, this.lang, this.wantSource), opts.glossary);
     this.variantIdx = Math.min(Number(safeGet(this.variantKey) || 0), this.variants.length - 1);
     this.active = null;
     this.pending = null;

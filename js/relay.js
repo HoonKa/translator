@@ -64,6 +64,11 @@ async function firebaseRelay(cfg) {
     async clearRoom(code) {
       await Promise.all([remove(ref(db, `rooms/${code}/lines`)), remove(ref(db, `rooms/${code}/live`))]);
     },
+    async getLines(code, lang) {
+      const snap = await get(ref(db, `rooms/${code}/lines/${lang}`));
+      const v = snap.val() || {};
+      return Object.keys(v).sort().map(k => v[k]);
+    },
     watchMeta(code, cb) { return onValue(ref(db, `rooms/${code}/meta`), s => cb(s.val())); },
     watchLive(code, lang, cb) { return onValue(ref(db, `rooms/${code}/live/${lang}`), s => cb(s.val() || '')); },
     watchLines(code, lang, cb, n = 60) {
@@ -106,6 +111,7 @@ function mockRelay() {
     pushLine(code, lang, text) { const id = String(Date.now()).padStart(15, '0') + '-' + (seq++); write(`rooms/${code}/lines/${lang}`, db => setPath(db, `rooms/${code}/lines/${lang}/${id}`, { x: text, t: Date.now() })); },
     setLive(code, lang, text) { write(`rooms/${code}/live/${lang}`, db => setPath(db, `rooms/${code}/live/${lang}`, text)); },
     async clearRoom(code) { write(`rooms/${code}`, db => { setPath(db, `rooms/${code}/lines`, null); setPath(db, `rooms/${code}/live`, null); }); },
+    async getLines(code, lang) { const o = getPath(load(), `rooms/${code}/lines/${lang}`) || {}; return Object.keys(o).sort().map(k => o[k]); },
     watchMeta(code, cb) { return watch(`rooms/${code}/meta`, () => cb(getPath(load(), `rooms/${code}/meta`) || null)); },
     watchLive(code, lang, cb) { return watch(`rooms/${code}/live/${lang}`, () => cb(getPath(load(), `rooms/${code}/live/${lang}`) || '')); },
     watchLines(code, lang, cb, n = 60) {

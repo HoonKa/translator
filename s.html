@@ -19,6 +19,7 @@
   .spacer { flex:1; }
   select, button { font:inherit; font-size:15px; background:transparent; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px; flex:none; }
   select { flex:0 1 auto; min-width:0; max-width:42vw; }
+  @media (max-width: 400px) { .bar { gap:4px; padding-left:8px; padding-right:8px; } .bar button { padding:6px 7px; min-width:32px; } .bar .code { display:none; } select { max-width:38vw; } }
   select option { color:#111; }
   #feed { flex:1; overflow-y:auto; padding:16px 16px 40vh; font-size:var(--fs); line-height:1.45; -webkit-overflow-scrolling:touch; }
   #feed p { margin:0 0 .55em; }
@@ -37,6 +38,7 @@
     <button id="smaller" aria-label="Smaller text">A−</button>
     <button id="bigger" aria-label="Bigger text">A+</button>
     <button id="theme" aria-label="Light or dark">◐</button>
+    <button id="save" aria-label="Save captions" title="Save captions">⬇</button>
   </div>
   <div id="feed"><div id="status">Connecting…</div></div>
   <button id="jump">↓ Latest</button>

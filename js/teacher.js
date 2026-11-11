@@ -31,7 +31,25 @@ let segs = {};
 let srcSeg = null;
 let startedAt = 0;
 let wakeLock = null;
-const transcript = [];
+// Captions are also kept on this PC (7 days) so they can be saved as a file after class,
+// even if the tab was closed by mistake.
+const TKEY = 'transcript2';
+const WEEK = 7 * 24 * 3600 * 1000;
+let transcript = [];
+try { transcript = (JSON.parse(localStorage.getItem(TKEY)) || []).filter(e => e.t > Date.now() - WEEK); } catch {}
+let tSaveTimer = 0;
+function saveTranscript() {
+  if (tSaveTimer) return;
+  tSaveTimer = setTimeout(() => {
+    tSaveTimer = 0;
+    try { localStorage.setItem(TKEY, JSON.stringify(transcript)); } catch (e) {
+      // Storage full: drop the oldest day and try once more.
+      transcript = transcript.slice(Math.floor(transcript.length / 3));
+      try { localStorage.setItem(TKEY, JSON.stringify(transcript)); } catch {}
+    }
+  }, 2000);
+}
+function note(l) { transcript.push({ t: Date.now(), l }); saveTranscript(); }
 const live = {};       // lang -> { text, dirty, last }
 let shownLang = 'en';
 let mode = 'auto';      // 'auto' | 'gemini' | 'free'
@@ -157,6 +175,12 @@ async function renderMics() {
   sel.value = [...sel.options].some(o => o.value === saved) ? saved : '';
 }
 
+// Glossary: one entry per line, "원래 말 = 이렇게 번역".
+export function parseGlossary(text) {
+  return String(text || '').split(/\r?\n/).map(l => l.split(/=|→|->/)).filter(p => p.length >= 2)
+    .map(([a, ...b]) => ({ src: a.trim(), dst: b.join('=').trim() })).filter(g => g.src && g.dst).slice(0, 100);
+}
+
 // ---------- Captions out ----------
 function writeLive(lang, text, now = Date.now()) {
   const s = live[lang] || (live[lang] = { text: '', dirty: false, last: 0 });
@@ -178,7 +202,8 @@ function emitPartial(lang, t) {
   if (lang === 'ko') setPartial('src', t);
 }
 function emitFinal(lang, t) {
-  transcript.push({ at: new Date(), lang, text: t });
+  transcript.push({ t: Date.now(), l: lang, x: t });
+  saveTranscript();
   Promise.resolve(relay.pushLine(room, lang, t)).catch((e) => log(`relay write failed: ${e.message}`));
   if (lang === shownLang) addLine('out', t);
   if (lang === 'ko') addLine('src', t);
@@ -209,7 +234,7 @@ function startGemini() {
   for (const l of langs) segs[l] = makeSegmenter(l);
   srcSeg = makeSegmenter('ko');
   links = langs.map((lang, i) => new TranslatorLink({
-    apiKey, getToken, model, lang, wantSource: i === 0, wsUrl: WS_OVERRIDE, ...FAST,
+    apiKey, getToken, model, lang, glossary: cfg.glossary, wantSource: i === 0, wsUrl: WS_OVERRIDE, ...FAST,
     onText: (d) => { if (engine === 'gemini') segs[lang].push(d); },
     onSource: (d) => { if (engine === 'gemini') srcSeg.push(d); },
     onStatus: () => updateAiStatus(),
@@ -226,7 +251,7 @@ function stopGemini() {
 }
 function startFree() {
   free = new FreeEngine({
-    langs: cfg.langs, translators, srcLang: srcLang(),
+    langs: cfg.langs, glossary: cfg.glossary, translators, srcLang: srcLang(),
     onPartial: (l, t) => { if (engine === 'free') emitPartial(l, t); },
     onFinal: (l, t) => { if (engine === 'free') emitFinal(l, t); },
     onStatus: () => updateAiStatus(),
@@ -272,7 +297,9 @@ async function start() {
   const model = $('model').value || TRANSLATE_MODEL;
   store.set('model', model);
   shownLang = langs[0];
-  cfg = { apiKey, tokenUrl, password, model, langs };
+  const glossary = parseGlossary($('glossary').value);
+  store.set('glossary', $('glossary').value);
+  cfg = { apiKey, tokenUrl, password, model, langs, glossary };
 
   $('startBtn').disabled = true;
   try {
@@ -291,6 +318,11 @@ async function start() {
   renderMics();
 
   notLiveSince = 0; probing = false;
+  if (mode === 'auto' && !cred && !canFree()) {
+    mic.stop(); mic = null; $('startBtn').disabled = false;
+    msg('이 브라우저에는 수업 비밀번호가 저장돼 있지 않아요. 휴대폰에서는 무료 크롬 번역을 쓸 수 없어서, 관리자에게 받은 설정 링크를 이 브라우저에서 먼저 열어 주세요.', 'bad', 'modeMsg');
+    return;
+  }
   if (mode === 'free' || (mode === 'auto' && !cred)) {
     engine = 'free';
     geminiRetryAt = Infinity;
@@ -303,6 +335,7 @@ async function start() {
 
   running = true;
   startedAt = Date.now();
+  note('_start');
   await relay.setActive(room, true, [...langs, 'ko']).catch(e => log(`relay: ${e.message}`));
   $('startBtn').textContent = '수업 종료';
   $('startBtn').classList.add('stop');
@@ -313,6 +346,8 @@ async function start() {
 
 async function stop() {
   running = false;
+  note('_stop');
+  msg('수업을 마쳤어요. 오늘 자막을 파일로 남기려면 [📄 자막 저장]을 누르세요.', 'info', 'modeMsg');
   stopGemini();
   if (free) { free.stop(); free = null; }
   engine = null;
@@ -337,7 +372,17 @@ function onChunk({ b64, rms }) {
   if (now % 1000 < 100) updateTimer(now);
 }
 
+const canFree = () => { const s = freeModeSupport(); return s.speech && s.translator; };
+
 function autoSwitch(now) {
+  if (engine === 'gemini' && !probing && !canFree()) {
+    // Phones etc.: no built-in translator, so keep retrying Gemini instead of switching.
+    for (const l of links.filter(l => l.state === 'error')) {
+      if (!l.retryAt) { l.retryAt = now + 60000; log(`[${l.lang}] 오류, 1분 뒤 다시 시도: ${l.detail}`); }
+      else if (now >= l.retryAt) { l.retryAt = 0; l.start(); }
+    }
+    return;
+  }
   if (engine === 'gemini' && !probing) {
     const errs = links.filter(l => l.state === 'error');
     if (links[0] && links[0].state === 'error' || (links.length && errs.length === links.length)) return switchToFree((errs[0].detail || '오류').split(' (')[0]);
@@ -416,12 +461,36 @@ async function lockScreen() {
 document.addEventListener('visibilitychange', () => { if (running && document.visibilityState === 'visible' && (!wakeLock || wakeLock.released)) lockScreen(); });
 
 function download() {
-  const lines = transcript.map(t => `[${t.at.toLocaleTimeString()}] (${t.lang}) ${t.text}`);
-  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+  const items = transcript.filter(e => e.x || e.l[0] === '_');
+  if (!items.some(e => e.x)) { msg('아직 저장할 자막이 없어요.', 'warn', 'copied'); return; }
+  // The most recent class day.
+  const day = (t) => new Date(t).toLocaleDateString('sv-SE');
+  const last = day(items.filter(e => e.x).at(-1).t);
+  const today = items.filter(e => day(e.t) === last);
+  const hm = (t) => new Date(t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const names = Object.fromEntries(LANGS);
+  names.ko = '원문 (한국어/영어)';
+  const order = ['ko', ...LANGS.map(l => l[0])];
+  const used = [...new Set(today.filter(e => e.x).map(e => e.l))].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  const sessions = [];
+  for (const e of today) {
+    if (e.l === '_start') sessions.push([e.t, 0]);
+    else if (e.l === '_stop' && sessions.length) sessions.at(-1)[1] = e.t;
+  }
+  const out = [`수업 자막 ${last}`];
+  if (sessions.length) out.push('수업 시간: ' + sessions.map(([a, b]) => `${hm(a).slice(0, 5)} ~ ${b ? hm(b).slice(0, 5) : ''}`).join(', '));
+  out.push(`방 코드: ${room || ''}`, '');
+  for (const l of used) {
+    out.push(`===== ${names[l] || l} =====`);
+    for (const e of today) if (e.l === l) out.push(`[${hm(e.t)}] ${e.x}`);
+    out.push('');
+  }
+  const blob = new Blob(['﻿' + out.join('\r\n')], { type: 'text/plain;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `수업자막_${new Date().toISOString().slice(0, 10)}.txt`;
-  a.click();
+  a.download = `class-captions_${last}.txt`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
 // ---------- Init ----------
@@ -437,6 +506,7 @@ function applySetupLink() {
     if (c.langs) store.set('langs2', c.langs);
     if (c.mode) store.set('mode', c.mode);
     if (c.model) store.set('model', c.model);
+    if (c.gl !== undefined) store.set('glossary', c.gl);
     store.set('configured', '1');
   } catch (e) { console.warn('bad setup link', e); }
   history.replaceState(null, '', location.pathname + location.search);
@@ -445,7 +515,7 @@ function applySetupLink() {
 function makeSetupLink() {
   const tokenUrl = $('tokenUrl').value.trim(), pw = $('classPw').value;
   const server = tokenUrl && pw;
-  const c = { key: server ? '' : $('apiKey').value.trim(), tokenUrl, pw, langs: selectedLangs().join(','), mode: $('mode').value, model: $('model').value };
+  const c = { key: server ? '' : $('apiKey').value.trim(), tokenUrl, pw, langs: selectedLangs().join(','), mode: $('mode').value, model: $('model').value, gl: $('glossary').value };
   const enc = encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(c)))));
   const u = new URL(location.href); u.hash = `setup=${enc}`;
   return u.toString();
@@ -471,7 +541,7 @@ function checkBrowser() {
     d.appendChild(b);
     $('msgs').appendChild(d);
   } else if (mobile) {
-    msg('선생님 화면은 PC 크롬에서 쓰도록 만들었어요. 휴대폰에서도 되지만 화면이 꺼지면 번역이 멈춰요.', 'info', 'mobileMsg');
+    msg('휴대폰으로 수업할 때는 수업 내내 이 화면을 켜 두세요. 화면이 꺼지거나 다른 앱으로 가면 번역이 멈춰요. 충전기를 꽂고 방해 금지 모드를 켜 두면 좋아요.', 'info', 'mobileMsg');
   }
 }
 
@@ -483,6 +553,7 @@ async function init() {
   $('classPw').value = store.get('classPw', '');
   $('model').value = store.get('model', TRANSLATE_MODEL);
   $('mode').value = store.get('mode', 'auto');
+  $('glossary').value = store.get('glossary', '');
   renderLangs();
   renderMics();
   navigator.mediaDevices?.addEventListener?.('devicechange', renderMics);
@@ -517,6 +588,7 @@ async function init() {
     }
   };
   $('setupLinkBtn').onclick = () => {
+    store.set('glossary', $('glossary').value);
     store.set('apiKey', $('apiKey').value.trim()); store.set('tokenUrl', $('tokenUrl').value.trim()); store.set('classPw', $('classPw').value); store.set('configured', '1');
     navigator.clipboard.writeText(makeSetupLink()).then(() => msg('설정 링크를 복사했어요. 선생님 PC 크롬에서 한 번 열어주세요.', 'info', 'copied'));
   };

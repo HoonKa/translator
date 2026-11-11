@@ -31,7 +31,9 @@
   .url { font-size:12px; color:var(--dim); text-align:center; word-break:break-all; }
   .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
   label { display:block; font-size:13px; color:var(--dim); margin:12px 0 4px; }
-  input[type=password], input[type=text], select { width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:#10131a; color:var(--text); font:inherit; }
+  input[type=password], input[type=text], select, textarea { width:100%; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:#10131a; color:var(--text); font:inherit; }
+  textarea { resize:vertical; line-height:1.5; }
+  @media (max-width: 600px) { header { padding:10px 14px; } main { padding:12px; gap:12px; } #startBtn { padding:22px; font-size:22px; } .row button { flex:1 1 auto; padding:10px; } }
   .langs { display:flex; flex-wrap:wrap; gap:6px 12px; }
   .langs label { display:flex; gap:6px; align-items:center; margin:0; color:var(--text); font-size:14px; }
   #meter { height:8px; background:#10131a; border-radius:4px; overflow:hidden; margin-top:10px; }
@@ -65,7 +67,7 @@
       <button id="startBtn" disabled>수업 시작</button>
       <div id="meter"><div></div></div>
       <div class="url" id="micName" style="text-align:left;margin-top:6px"></div>
-      <div class="row"><button id="srcBtn" title="무료 크롬 모드에서만 필요해요. Gemini는 한국어/영어를 자동으로 알아들어요.">말하는 언어: 한국어</button></div>
+      <div class="row"><button id="srcBtn" title="무료 크롬 모드에서만 필요해요. Gemini는 한국어/영어를 자동으로 알아들어요.">말하는 언어: 한국어</button><button id="dlBtn" title="가장 최근 수업일의 자막을 언어별로 정리해 파일로 저장해요.">📄 자막 저장</button></div>
     </div>
     <div class="card" style="margin-top:16px">
       <h2>학생 접속 (QR 코드를 찍으세요)</h2>
@@ -96,6 +98,9 @@
       <select id="mic"><option value="">기본 마이크</option></select>
       <label>번역 언어 (학생이 휴대폰에서 고를 수 있어요)</label>
       <div class="langs" id="langs"></div>
+      <label for="glossary">용어집 (한 줄에 하나씩: 원래 말 = 이렇게 번역)</label>
+      <textarea id="glossary" rows="4" placeholder="홍길동 = Hong Gil-dong&#10;수행평가 = performance assessment&#10;한빛고 = Hanbit High School"></textarea>
+      <div class="url" style="text-align:left;margin-top:4px">사람 이름, 학교 이름, 과목 용어처럼 자주 틀리는 말을 적어 두면 번역할 때 이 표기를 써요.</div>
       <details>
         <summary>고급 설정</summary>
         <label for="model">번역 모델</label>
@@ -103,7 +108,7 @@
           <option value="gemini-3.5-live-translate-preview">gemini-3.5-live-translate-preview (실시간 통역, 권장)</option>
           <option value="gemini-3.8-live">gemini-3.8-live (일반 모델, 말이 끊길 때 번역)</option>
         </select>
-        <div class="row"><button id="clearBtn">자막 기록 지우기</button><button id="dlBtn">자막 내려받기 (.txt)</button></div>
+        <div class="row"><button id="clearBtn">학생 화면 자막 기록 지우기</button></div>
         <label>연결 기록</label>
         <div id="log"></div>
       </details>

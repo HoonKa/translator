@@ -72,7 +72,28 @@ async function keepAwake() {
   } catch {}
 }
 
+// Save today's captions in the chosen language as a text file.
+async function save() {
+  if (!relay || !lang) return;
+  let lines = [];
+  try { lines = await relay.getLines(code, lang); } catch (e) { alert(`Could not load captions: ${e.message}`); return; }
+  lines = lines.filter(v => v && v.x);
+  if (!lines.length) { alert('No captions yet.'); return; }
+  const day = (t) => new Date(t).toLocaleDateString('sv-SE');
+  const last = day(lines.at(-1).t || Date.now());
+  const hm = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  const body = lines.filter(v => !v.t || day(v.t) === last).map(v => (v.t ? `[${hm(v.t)}] ` : '') + v.x);
+  const text = [`Class captions ${last} (${NAMES[lang] || lang})`, '', ...body].join('\r\n');
+  const blob = new Blob(['\ufeff' + text], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `captions_${last}_${lang}.txt`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
 async function init() {
+  $('save').onclick = save;
   $('code').textContent = code;
   let fs = Number(store.get('fs', 24));
   const applyFs = () => { document.documentElement.style.setProperty('--fs', `${fs}px`); store.set('fs', fs); };
