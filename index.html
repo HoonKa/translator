@@ -11,9 +11,9 @@
   :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --dim:#9aa3b2; --accent:#4f8cff; --ok:#2ecc71; --warn:#f5a623; --bad:#ff5c5c; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font-family: "Segoe UI","Malgun Gothic",system-ui,sans-serif; }
-  header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--line); }
+  header { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:14px 20px; border-bottom:1px solid var(--line); }
   header h1 { font-size:18px; margin:0; font-weight:600; }
-  .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:var(--card); border:1px solid var(--line); font-size:13px; color:var(--dim); }
+  .pill { white-space:nowrap; display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:var(--card); border:1px solid var(--line); font-size:13px; color:var(--dim); }
   .dot { width:9px; height:9px; border-radius:50%; background:#555; }
   .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
   main { display:grid; grid-template-columns: 340px 1fr; gap:16px; padding:16px 20px; max-width:1300px; margin:0 auto; }

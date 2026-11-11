@@ -279,7 +279,11 @@ async function start() {
     mic = await startMic({ deviceId: $('mic').value, onChunk, onEnded: onMicEnded });
   } catch (e) {
     $('startBtn').disabled = false;
-    msg(`마이크를 켤 수 없어요: ${e.message}. 브라우저 주소창의 마이크 권한을 확인해 주세요.`, 'bad', 'micErr');
+    const why = e.name === 'NotAllowedError' ? '마이크 사용이 차단돼 있어요. 주소창 왼쪽 아이콘을 눌러 마이크를 "허용"으로 바꾼 뒤 새로고침해 주세요.'
+      : e.name === 'NotFoundError' || e.name === 'OverconstrainedError' ? '마이크를 찾을 수 없어요. 마이크가 PC에 꽂혀 있는지 확인해 주세요.'
+      : e.name === 'NotReadableError' ? '다른 프로그램(줌, 팀즈 등)이 마이크를 쓰고 있어요. 그 프로그램을 끄고 다시 시도해 주세요.'
+      : `마이크를 켤 수 없어요 (${e.message}).`;
+    msg(why, 'bad', 'micErr');
     return;
   }
   msg(null, '', 'micErr');
@@ -336,7 +340,7 @@ function onChunk({ b64, rms }) {
 function autoSwitch(now) {
   if (engine === 'gemini' && !probing) {
     const errs = links.filter(l => l.state === 'error');
-    if (links[0] && links[0].state === 'error' || (links.length && errs.length === links.length)) return switchToFree('오류: ' + (errs[0].detail || ''));
+    if (links[0] && links[0].state === 'error' || (links.length && errs.length === links.length)) return switchToFree((errs[0].detail || '오류').split(' (')[0]);
     // Another language failed alone (e.g. a usage limit): keep the others running and retry it in 2 minutes.
     for (const l of errs) {
       if (!l.retryAt) { l.retryAt = now + 120000; log(`[${l.lang}] 오류, 2분 뒤 다시 시도: ${l.detail}`); }
@@ -532,7 +536,7 @@ async function init() {
     if (await claimRoom()) $('startBtn').disabled = false;
   } catch (e) {
     log(`relay init failed: ${e.message}`);
-    msg(`자막 서버에 연결하지 못했어요: ${e.message}`, 'bad', 'cfg');
+    msg('자막 서버에 연결하지 못했어요. 인터넷 연결을 확인하고 새로고침(F5) 해 주세요.', 'bad', 'cfg');
     setDot('relayDot', 'relayState', 'bad', '자막 서버 오류');
   }
 }
