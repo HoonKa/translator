@@ -61,7 +61,13 @@ let geminiRetryAt = 0;
 let probing = false;
 let cfg = null;         // { apiKey, tokenUrl, password, model, langs }
 const hasCred = () => !!(cfg && (cfg.apiKey || (cfg.tokenUrl && cfg.password)));
-const GEMINI_RETRY_MS = 15 * 60 * 1000;
+// How soon to try Gemini again after it failed: quickly at first, then less often.
+const GEMINI_RETRY = [30, 60, 120, 300].map(s => s * 1000);
+const LINK_RETRY = [10, 20, 40, 60].map(s => s * 1000);
+let geminiFails = 0;
+const nextGeminiDelay = () => GEMINI_RETRY[Math.min(geminiFails++, GEMINI_RETRY.length - 1)];
+const linkDelay = (l) => LINK_RETRY[Math.min((l.fails = (l.fails || 0) + 1) - 1, LINK_RETRY.length - 1)];
+const secs = (ms) => ms >= 60000 ? `${ms / 60000}분` : `${ms / 1000}초`;
 const srcLang = () => store.get('srcLang', 'ko');
 
 // ---------- UI helpers ----------
@@ -265,9 +271,10 @@ function switchToFree(why) {
   engine = 'free';
   probing = false;
   notLiveSince = 0;
-  geminiRetryAt = Date.now() + GEMINI_RETRY_MS;
+  const d = nextGeminiDelay();
+  geminiRetryAt = Date.now() + d;
   if (!free) startFree();
-  msg(`Gemini 번역이 멈춰서 무료 크롬 번역으로 바꿨어요 (${why}). 15분 뒤 Gemini를 다시 시도해요.`, 'warn', 'modeMsg');
+  msg(`Gemini 번역이 멈춰서 무료 크롬 번역으로 바꿨어요 (${why}). Gemini가 다시 되면 자동으로 돌아가요 (${secs(d)} 뒤 첫 확인).`, 'warn', 'modeMsg');
   updateAiStatus();
 }
 
@@ -317,7 +324,7 @@ async function start() {
   $('micName').textContent = `🎤 ${mic.label} (${mic.sampleRate} Hz)`;
   renderMics();
 
-  notLiveSince = 0; probing = false;
+  notLiveSince = 0; probing = false; geminiFails = 0;
   if (mode === 'auto' && !cred && !canFree()) {
     mic.stop(); mic = null; $('startBtn').disabled = false;
     msg('이 브라우저에는 수업 비밀번호가 저장돼 있지 않아요. 휴대폰에서는 무료 크롬 번역을 쓸 수 없어서, 관리자에게 받은 설정 링크를 이 브라우저에서 먼저 열어 주세요.', 'bad', 'modeMsg');
@@ -375,10 +382,11 @@ function onChunk({ b64, rms }) {
 const canFree = () => { const s = freeModeSupport(); return s.speech && s.translator; };
 
 function autoSwitch(now) {
+  for (const l of links) if (l.state === 'live' && l.fails) l.fails = 0;
   if (engine === 'gemini' && !probing && !canFree()) {
     // Phones etc.: no built-in translator, so keep retrying Gemini instead of switching.
     for (const l of links.filter(l => l.state === 'error')) {
-      if (!l.retryAt) { l.retryAt = now + 60000; log(`[${l.lang}] 오류, 1분 뒤 다시 시도: ${l.detail}`); }
+      if (!l.retryAt) { const d = linkDelay(l); l.retryAt = now + d; log(`[${l.lang}] 오류, ${secs(d)} 뒤 다시 시도: ${l.detail}`); }
       else if (now >= l.retryAt) { l.retryAt = 0; l.start(); }
     }
     return;
@@ -388,24 +396,25 @@ function autoSwitch(now) {
     if (links[0] && links[0].state === 'error' || (links.length && errs.length === links.length)) return switchToFree((errs[0].detail || '오류').split(' (')[0]);
     // Another language failed alone (e.g. a usage limit): keep the others running and retry it in 2 minutes.
     for (const l of errs) {
-      if (!l.retryAt) { l.retryAt = now + 120000; log(`[${l.lang}] 오류, 2분 뒤 다시 시도: ${l.detail}`); }
+      if (!l.retryAt) { const d = linkDelay(l); l.retryAt = now + d; log(`[${l.lang}] 오류, ${secs(d)} 뒤 다시 시도: ${l.detail}`); }
       else if (now >= l.retryAt) { l.retryAt = 0; l.start(); }
     }
     if (links[0] && links[0].state !== 'live') {
       if (!notLiveSince) notLiveSince = now;
-      else if (now - notLiveSince > 20000) return switchToFree('20초 넘게 연결 안 됨');
+      else if (now - notLiveSince > 10000) return switchToFree('10초 넘게 연결 안 됨');
     } else notLiveSince = 0;
   } else if (engine === 'free' && hasCred() && now >= geminiRetryAt) {
     if (!probing) { probing = true; log('Gemini 다시 시도'); startGemini(); return; }
     if (links.length && links.every(l => l.state === 'live')) {
       log('Gemini 복구됨: Gemini 번역으로 돌아갑니다');
-      probing = false; engine = 'gemini'; notLiveSince = 0;
+      probing = false; engine = 'gemini'; notLiveSince = 0; geminiFails = 0;
       if (free) { free.stop(); free = null; }
       msg('Gemini 번역으로 다시 돌아왔어요.', 'info', 'modeMsg');
       updateAiStatus();
     } else if (links.some(l => l.state === 'error') || now - geminiRetryAt > 30000) {
-      stopGemini(); probing = false; geminiRetryAt = now + GEMINI_RETRY_MS;
-      log('Gemini 아직 사용 불가: 15분 뒤 다시 시도');
+      stopGemini(); probing = false;
+      const d = nextGeminiDelay(); geminiRetryAt = now + d;
+      log(`Gemini 아직 사용 불가: ${secs(d)} 뒤 다시 시도`);
     }
   }
 }
