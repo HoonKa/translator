@@ -291,7 +291,7 @@ async function start() {
     engine = 'free';
     geminiRetryAt = Infinity;
     startFree();
-    if (mode === 'auto') msg('API 키가 없어서 무료 크롬 번역으로 시작했어요.', 'info', 'modeMsg');
+    if (mode === 'auto') msg('이 브라우저에는 수업 비밀번호가 저장돼 있지 않아서 무료 크롬 번역으로 시작했어요. ⚙️ 관리자 설정에 비밀번호를 넣으면 Gemini로 번역해요.', 'warn', 'modeMsg');
   } else {
     engine = 'gemini';
     startGemini();
@@ -447,7 +447,32 @@ function makeSetupLink() {
   return u.toString();
 }
 
+// KakaoTalk / Naver / Instagram built-in browsers block speech recognition and keep separate settings.
+function checkBrowser() {
+  const ua = navigator.userAgent;
+  const inApp = /KAKAOTALK|NAVER\(|Instagram|FBAN|FBAV|Line\/|DaumApps|everytimeApp/i.test(ua);
+  const mobile = /Android|iPhone|iPad/i.test(ua);
+  if (inApp) {
+    const d = document.createElement('div');
+    d.className = 'msg bad';
+    d.innerHTML = '카카오톡 같은 앱 안의 브라우저에서는 마이크와 음성 인식이 제대로 동작하지 않아요. <b>크롬에서 열어 주세요.</b> ';
+    const b = document.createElement('button');
+    b.textContent = '크롬으로 열기';
+    b.style.marginTop = '8px';
+    b.onclick = () => {
+      if (/KAKAOTALK/i.test(ua)) location.href = 'kakaotalk://web/openExternal?url=' + encodeURIComponent(location.href);
+      else if (/Android/i.test(ua)) location.href = `intent://${location.host}${location.pathname}${location.search}#Intent;scheme=https;package=com.android.chrome;end`;
+      else navigator.clipboard.writeText(location.href).then(() => alert('주소를 복사했어요. 크롬이나 사파리에 붙여넣어 주세요.'));
+    };
+    d.appendChild(b);
+    $('msgs').appendChild(d);
+  } else if (mobile) {
+    msg('선생님 화면은 PC 크롬에서 쓰도록 만들었어요. 휴대폰에서도 되지만 화면이 꺼지면 번역이 멈춰요.', 'info', 'mobileMsg');
+  }
+}
+
 async function init() {
+  checkBrowser();
   const fromLink = applySetupLink();
   $('apiKey').value = store.get('apiKey', '');
   $('tokenUrl').value = store.get('tokenUrl', '') || window.TOKEN_URL || '';
