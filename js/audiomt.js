@@ -5,9 +5,11 @@
 const SPEECH_RMS = 0.02;
 const QUIET_RMS = 0.015;
 const PREROLL = 3;          // keep 0.3 s before speech starts
-const END_SILENCE = 7;      // 0.7 s of quiet ends a piece
+const END_SILENCE = 7;      // 0.7 s of quiet ends a piece once it is long enough
+const LONG_SILENCE = 15;    // 1.5 s of quiet ends any piece
+const MIN_CHUNKS = 50;      // prefer pieces of at least 5 s (fewer requests, whole sentences)
 const MIN_VOICED = 8;       // ignore pieces with less than 0.8 s of speech (coughs, noise)
-const MAX_CHUNKS = 100;     // 10 s at most per piece
+const MAX_CHUNKS = 150;     // 15 s at most per piece
 const NAMES = { en: 'English', my: 'Burmese (Myanmar script)', vi: 'Vietnamese', mn: 'Mongolian (Cyrillic)', uz: 'Uzbek (Latin script)' };
 
 export class AudioTranslator {
@@ -30,7 +32,8 @@ export class AudioTranslator {
     s.chunks.push(b64);
     if (rms >= SPEECH_RMS) { s.voiced++; s.quiet = 0; } else if (rms < QUIET_RMS) s.quiet++;
     if (s.quiet >= END_SILENCE * 3 && s.voiced < MIN_VOICED) { this.seg = null; return; }          // just noise
-    if ((s.quiet >= END_SILENCE && s.voiced >= MIN_VOICED) || s.chunks.length >= MAX_CHUNKS) this.cut();
+    const pause = s.chunks.length >= MIN_CHUNKS ? END_SILENCE : LONG_SILENCE;
+    if ((s.quiet >= pause && s.voiced >= MIN_VOICED) || s.chunks.length >= MAX_CHUNKS) this.cut();
   }
   /** Finish the current piece now (also called when the class stops). */
   cut() {
