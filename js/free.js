@@ -4,6 +4,8 @@
 // Limits: desktop Chrome 138+ / Edge, uses the default microphone, lower quality than Gemini.
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+// ?nowatch=1 turns off the automatic restart (for comparing recognition quality).
+const NO_WATCH = new URLSearchParams(location.search).has('nowatch');
 const TR_CODE = { 'zh-Hans': 'zh', 'zh-Hant': 'zh-Hant' };
 
 export function freeModeSupport() {
@@ -47,7 +49,7 @@ export class FreeEngine {
   }
   /** Called with every mic chunk: restarts speech recognition if it went deaf while the teacher speaks. */
   noteAudio(rms) {
-    if (!this.running || !this.rec) return;
+    if (!this.running || !this.rec || NO_WATCH) return;
     // Loud chunks in the last 5 s (50 chunks of 100 ms).
     const w = this.win || (this.win = []);
     w.push(rms >= 0.02 ? 1 : 0);
