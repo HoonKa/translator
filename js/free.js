@@ -61,7 +61,7 @@ export class FreeEngine {
     const grace = Math.min(30000, 10000 * 2 ** Math.max(0, (this.kicksInRow || 0) - 1));
     if (loud >= 25 && now - (this.lastResultAt || 0) > 5000 && now - (this.startedAt || 0) > (this.kicksInRow ? grace : 5000)) {
       this.kicksInRow = (this.kicksInRow || 0) + 1;
-      this.lastKickAt = now; this.kicks = (this.kicks || 0) + 1;
+      this.lastKickAt = now; this.startedAt = now; this.kicks = (this.kicks || 0) + 1;
       this._log(`free: 말하는 중인데 5초간 인식 결과 없음 -> 음성 인식 다시 시작 (${this.kicks}번째)`);
       this.deafSince = this.deafSince || (this.lastResultAt || now);
       try { this.rec.abort(); } catch {}
