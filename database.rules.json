@@ -5,7 +5,15 @@
         ".read": true,
         ".write": "auth != null && (!data.exists() || data.child('meta/owner').val() === auth.uid)",
         "meta": {
-          "owner": { ".validate": "newData.val() === auth.uid" }
+          "owner": {
+            ".validate": "newData.val() === auth.uid"
+          }
+        },
+        "viewers": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "newData.isString() && newData.val().length < 12"
+          }
         }
       }
     }

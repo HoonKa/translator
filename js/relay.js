@@ -69,6 +69,13 @@ async function firebaseRelay(cfg) {
       const v = snap.val() || {};
       return Object.keys(v).sort().map(k => v[k]);
     },
+    // Students register which language they are reading, so the teacher PC can translate only those.
+    join(code, lang) {
+      if (!uid) return Promise.resolve();
+      const r = ref(db, `rooms/${code}/viewers/${uid}`);
+      return set(r, lang).then(() => onDisconnect(r).remove());
+    },
+    watchViewers(code, cb) { return onValue(ref(db, `rooms/${code}/viewers`), s => cb(s.val() || {})); },
     watchMeta(code, cb) { return onValue(ref(db, `rooms/${code}/meta`), s => cb(s.val())); },
     watchLive(code, lang, cb) { return onValue(ref(db, `rooms/${code}/live/${lang}`), s => cb(s.val() || '')); },
     watchLines(code, lang, cb, n = 60) {
@@ -112,6 +119,13 @@ function mockRelay() {
     setLive(code, lang, text) { write(`rooms/${code}/live/${lang}`, db => setPath(db, `rooms/${code}/live/${lang}`, text)); },
     async clearRoom(code) { write(`rooms/${code}`, db => { setPath(db, `rooms/${code}/lines`, null); setPath(db, `rooms/${code}/live`, null); }); },
     async getLines(code, lang) { const o = getPath(load(), `rooms/${code}/lines/${lang}`) || {}; return Object.keys(o).sort().map(k => o[k]); },
+    join(code, lang) {
+      const id = sessionStorage.getItem('mockuid') || (sessionStorage.setItem('mockuid', 'u' + Math.random().toString(36).slice(2)), sessionStorage.getItem('mockuid'));
+      write(`rooms/${code}/viewers`, db => setPath(db, `rooms/${code}/viewers/${id}`, lang));
+      addEventListener('pagehide', () => write(`rooms/${code}/viewers`, db => setPath(db, `rooms/${code}/viewers/${id}`, null)));
+      return Promise.resolve();
+    },
+    watchViewers(code, cb) { return watch(`rooms/${code}/viewers`, () => cb(getPath(load(), `rooms/${code}/viewers`) || {})); },
     watchMeta(code, cb) { return watch(`rooms/${code}/meta`, () => cb(getPath(load(), `rooms/${code}/meta`) || null)); },
     watchLive(code, lang, cb) { return watch(`rooms/${code}/live/${lang}`, () => cb(getPath(load(), `rooms/${code}/live/${lang}`) || '')); },
     watchLines(code, lang, cb, n = 60) {

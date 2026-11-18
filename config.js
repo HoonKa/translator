@@ -11,3 +11,6 @@ window.FIREBASE_CONFIG = {
 
 // Cloudflare key server (keeps the Gemini API key secret).
 window.TOKEN_URL = "https://translatorkey.hookweb-f85.workers.dev";
+
+// Translate only the languages students have chosen on their phones (needs the 'viewers' database rule).
+window.ON_DEMAND = false;

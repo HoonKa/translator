@@ -40,6 +40,10 @@ function updateDot() {
   $('dot').className = `dot ${live ? 'ok' : connected ? 'warn' : ''}`;
 }
 
+// Tell the teacher PC which language this phone is reading (it may translate only those).
+function joinLang() {
+  if (relay && relay.join && lang) Promise.resolve(relay.join(code, lang)).catch((e) => console.warn('join', e.message));
+}
 function selectLang(l) {
   if (l === lang) return;
   lang = l;
@@ -47,6 +51,7 @@ function selectLang(l) {
   if (unLines) unLines();
   if (unLive) unLive();
   $('feed').querySelectorAll('p').forEach(p => p.remove());
+  joinLang();
   unLines = relay.watchLines(code, l, (_k, v) => { status(''); addLine(v.x); });
   unLive = relay.watchLive(code, l, (t) => { partialEl().textContent = t; if (t) status(''); scroll(); });
 }
@@ -118,7 +123,8 @@ async function init() {
   try {
     relay = await createRelay(RELAY_KIND, window.FIREBASE_CONFIG);
   } catch (e) { status(`Could not connect: ${e.message}`); return; }
-  relay.watchConnection((ok) => { connected = ok; updateDot(); });
+  try { await relay.signIn(); } catch (e) { console.warn('sign-in', e.message); }
+  relay.watchConnection((ok) => { connected = ok; updateDot(); if (ok) joinLang(); });
   relay.watchMeta(code, (m) => {
     meta = m;
     updateDot();

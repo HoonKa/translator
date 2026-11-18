@@ -134,7 +134,11 @@ function qrSvg(text) {
   q.make();
   return q.createSvgTag({ cellSize: 8, margin: 2, scalable: true });
 }
+let unViewers = null;
 function showRoom() {
+  if (unViewers) unViewers();
+  viewers = {};
+  unViewers = relay.watchViewers ? relay.watchViewers(room, (v) => { viewers = v; showViewers(); }) : null;
   const url = studentUrl(room);
   $('roomCode').textContent = room;
   $('roomUrl').textContent = url;
@@ -238,22 +242,65 @@ async function fetchToken() {
   return j.token;
 }
 
-function startGemini() {
-  const { apiKey, model, langs } = cfg;
+function makeLink(lang) {
+  const { apiKey, model } = cfg;
   const getToken = cfg.tokenUrl && cfg.password ? fetchToken : undefined;
-  segs = {};
-  for (const l of langs) segs[l] = makeSegmenter(l);
-  srcSeg = makeSegmenter('ko');
-  links = langs.map((lang, i) => new TranslatorLink({
-    apiKey, getToken, model, lang, glossary: cfg.glossary, stagger: i, wantSource: i === 0, wsUrl: WS_OVERRIDE, ...FAST,
-    onText: (d) => { if (engine === 'gemini') segs[lang].push(d); },
-    // The server may send the recognized speech on every language's connection: use only the first one.
-    onSource: i === 0 ? (d) => { if (engine === 'gemini' && srcSeg) srcSeg.push(d); } : undefined,
+  if (!segs[lang]) segs[lang] = makeSegmenter(lang);
+  const k = new TranslatorLink({
+    apiKey, getToken, model, lang, glossary: cfg.glossary, stagger: links.length, wantSource: true, wsUrl: WS_OVERRIDE, ...FAST,
+    onText: (d) => { if (engine === 'gemini' && segs[lang]) segs[lang].push(d); },
+    // The server sends the recognized speech on every language's connection: use only the first one.
+    onSource: (d) => { if (engine === 'gemini' && srcSeg && links[0] === k) srcSeg.push(d); },
     onStatus: () => updateAiStatus(),
     onLog: log,
-  }));
+  });
+  links.push(k);
+  return k;
+}
+function startGemini() {
+  segs = {};
+  srcSeg = makeSegmenter('ko');
+  links = [];
+  for (const l of activeLangs()) makeLink(l);
   links.forEach(l => l.start());
 }
+
+// ---------- Only translate the languages students are reading ----------
+// Each student phone writes its language under rooms/{CODE}/viewers. With window.ON_DEMAND,
+// the PC runs one translation only for languages someone reads (fewer connections = less free quota).
+let viewers = {};
+const lastSeen = {};
+const IDLE_MS = 90 * 1000;   // keep a language a little after its last reader left (phone screen off etc.)
+const onDemand = () => !!window.ON_DEMAND;
+function activeLangs(now = Date.now()) {
+  if (!cfg) return [];
+  if (!onDemand()) return cfg.langs;
+  const reading = new Set(Object.values(viewers));
+  for (const l of reading) lastSeen[l] = now;
+  const want = cfg.langs.filter(l => reading.has(l) || now - (lastSeen[l] || 0) < IDLE_MS);
+  return want.length ? want : [cfg.langs[0]];
+}
+function syncLangs(now = Date.now()) {
+  if (!running || !cfg) return;
+  const want = activeLangs(now);
+  if (free) free.langs = want;
+  if (!want.includes(shownLang)) shownLang = want[0];
+  if (engine !== 'gemini' && !probing) return;
+  for (const l of want) if (!links.some(k => k.lang === l)) { log(`[${l}] 학생이 이 언어를 골라서 번역 시작`); makeLink(l).start(); }
+  for (const k of [...links]) if (!want.includes(k.lang)) {
+    log(`[${k.lang}] 읽는 학생이 없어서 번역 멈춤`);
+    k.stop(); links.splice(links.indexOf(k), 1);
+    if (segs[k.lang]) { segs[k.lang].flush(); delete segs[k.lang]; }
+  }
+}
+function showViewers() {
+  const counts = {};
+  for (const l of Object.values(viewers)) counts[l] = (counts[l] || 0) + 1;
+  const names = { en: '영어', my: '미얀마어', vi: '베트남어', mn: '몽골어', uz: '우즈베크어', ko: '원문' };
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  $('viewers').textContent = total ? `📱 학생 ${total}명 보는 중: ` + Object.entries(counts).map(([l, n]) => `${names[l] || l} ${n}`).join(', ') : '📱 아직 접속한 학생이 없어요';
+}
+
 function stopGemini() {
   links.forEach(l => l.stop());
   links = [];
@@ -263,7 +310,7 @@ function stopGemini() {
 }
 function startFree() {
   free = new FreeEngine({
-    langs: cfg.langs, glossary: cfg.glossary, translators, srcLang: srcLang(),
+    langs: activeLangs(), glossary: cfg.glossary, translators, srcLang: srcLang(),
     onPartial: (l, t) => { if (engine === 'free') emitPartial(l, t); },
     onFinal: (l, t) => { if (engine === 'free') emitFinal(l, t); },
     onStatus: () => updateAiStatus(),
@@ -383,7 +430,7 @@ function onChunk({ b64, rms }) {
   if (running && mode === 'auto') autoSwitch(now);
   for (const l of Object.keys(live)) if (now - live[l].last >= 100) flushLive(l, now);
   $('meter').firstElementChild.style.width = `${Math.min(100, rms * 400)}%`;
-  if (now % 1000 < 100) updateTimer(now);
+  if (now % 1000 < 100) { updateTimer(now); syncLangs(now); }
 }
 
 const canFree = () => { const s = freeModeSupport(); return s.speech && s.translator; };
