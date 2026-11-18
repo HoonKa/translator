@@ -5,6 +5,7 @@
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 // ?nowatch=1 turns off the automatic restart (for comparing recognition quality).
+const SENTENCE_END = /(다|요|까|죠|니다|[.?!。？！])\s*$/;
 const NO_WATCH = new URLSearchParams(location.search).has('nowatch');
 const TR_CODE = { 'zh-Hans': 'zh', 'zh-Hant': 'zh-Hant' };
 
@@ -49,7 +50,9 @@ export class FreeEngine {
   }
   /** Called with every mic chunk: restarts speech recognition if it went deaf while the teacher speaks. */
   noteAudio(rms) {
-    if (!this.running || !this.rec || NO_WATCH) return;
+    if (!this.running) return;
+    if (this.sent && !this.pendingNow && Date.now() - (this.pieceAt || 0) > 2000) this._flushSentence();
+    if (!this.rec || NO_WATCH) return;
     // Loud chunks in the last 5 s (50 chunks of 100 ms).
     const w = this.win || (this.win = []);
     w.push(rms >= 0.02 ? 1 : 0);
@@ -73,6 +76,9 @@ export class FreeEngine {
     }
   }
   stop() {
+    if (this.pending) this._piece(this.pending);
+    this.pending = '';
+    this._flushSentence();
     this.running = false;
     try { this.rec && this.rec.abort(); } catch {}
     this._status('stopped');
@@ -94,7 +100,7 @@ export class FreeEngine {
         const r = ev.results[i];
         const t = r[0].transcript.trim();
         if (!t) continue;
-        if (r.isFinal) this._final(t); else interim += (interim ? ' ' : '') + t;
+        if (r.isFinal) this._piece(t); else interim += (interim ? ' ' : '') + t;
       }
       this.pending = interim;
       this._interim(interim);
@@ -110,7 +116,7 @@ export class FreeEngine {
     // Chrome ends recognition after silence or about a minute: start again right away.
     rec.onend = () => {
       // Chrome drops words it had not finished when a session ends (or is restarted): keep them.
-      if (this.pending && this.running) { this._log(`free: 끝나지 않은 말 보존: "${this.pending.slice(0, 30)}"`); this._final(this.pending); }
+      if (this.pending && this.running) { this._log(`free: 끝나지 않은 말 보존: "${this.pending.slice(0, 30)}"`); this._piece(this.pending); }
       this.pending = '';
       if (!this.running) return;
       const delay = this.failures ? Math.min(5000, 300 * 2 ** this.failures) : 0;
@@ -172,7 +178,23 @@ export class FreeEngine {
     this.busy = false;
     if (this.queue.length) this._pump();
   }
+  // Chrome often "finishes" tiny pieces ("모델이", "왜냐면 기"). Collect pieces into one sentence and
+  // only show/translate it when the sentence is done: it ends like a Korean sentence, the speaker
+  // pauses for 2 s, or it gets long. Translating whole sentences is much more accurate.
+  _piece(t) {
+    this.sent = (this.sent ? this.sent + ' ' : '') + t;
+    this.pieceAt = Date.now();
+    if (SENTENCE_END.test(this.sent) || this.sent.length > 150) this._flushSentence();
+    else this._interim(this.pendingNow || '');
+  }
+  _flushSentence() {
+    const t = (this.sent || '').trim();
+    this.sent = '';
+    if (t) this._final(t);
+  }
   _interim(ko) {
+    this.pendingNow = ko;
+    if (this.sent) ko = this.sent + (ko ? ' ' + ko : '');
     this.onPartial('ko', ko);
     // Translate the unfinished sentence at most ~2x per second, so captions move while the teacher speaks.
     const now = Date.now();
