@@ -633,7 +633,9 @@ async function init() {
   $('tokenUrl').value = store.get('tokenUrl', '') || window.TOKEN_URL || '';
   $('classPw').value = store.get('classPw', '');
   $('model').value = store.get('model', TRANSLATE_MODEL);
-  $('mode').value = store.get('mode', 'auto');
+  // 2026-11: the default became Chrome speech-to-text + Gemini text translation (more accurate, less quota).
+  if (store.get('modeV2') !== '1') { if (store.get('mode', 'auto') === 'auto') store.set('mode', 'hybrid'); store.set('modeV2', '1'); }
+  $('mode').value = store.get('mode', 'hybrid');
   $('glossary').value = store.get('glossary', '');
   renderLangs();
   renderMics();
