@@ -247,7 +247,8 @@ function startGemini() {
   links = langs.map((lang, i) => new TranslatorLink({
     apiKey, getToken, model, lang, glossary: cfg.glossary, wantSource: i === 0, wsUrl: WS_OVERRIDE, ...FAST,
     onText: (d) => { if (engine === 'gemini') segs[lang].push(d); },
-    onSource: (d) => { if (engine === 'gemini') srcSeg.push(d); },
+    // The server may send the recognized speech on every language's connection: use only the first one.
+    onSource: i === 0 ? (d) => { if (engine === 'gemini' && srcSeg) srcSeg.push(d); } : undefined,
     onStatus: () => updateAiStatus(),
     onLog: log,
   }));
