@@ -19,8 +19,9 @@ export const CONSTRAINED_WS =
 export const TRANSLATE_MODEL = 'gemini-3.5-live-translate-preview';
 export const GENERAL_MODEL = 'gemini-3.8-live';
 
-const SOFT_ROTATE_MS = 5 * 60 * 1000;  // after this, switch at the next pause (short sessions stay fast)
-const HARD_ROTATE_MS = 7 * 60 * 1000;    // switch now, even mid-sentence
+const SOFT_ROTATE_MS = 7.5 * 60 * 1000; // after this, switch at the next pause (fewer new connections = less free quota used)
+const HARD_ROTATE_MS = 9.5 * 60 * 1000;  // switch now, even mid-sentence
+const STAGGER_MS = 20 * 1000;            // languages switch one after another, not all at once
 const SETUP_TIMEOUT_MS = 12000;
 const DRAIN_MS = 4000;                   // let the old connection finish its sentence
 const MAX_BUFFER_CHUNKS = 200;           // 20 s of audio
@@ -203,7 +204,8 @@ export class TranslatorLink {
     this.nextRetryAt = 0;
     this.running = false;
     this.stats = { connections: 0, rotations: 0, drops: 0 };
-    this.softRotateMs = opts.softRotateMs || SOFT_ROTATE_MS;
+    // Spread the switches out: each language waits a little longer than the previous one.
+    this.softRotateMs = (opts.softRotateMs || SOFT_ROTATE_MS) + (opts.stagger || 0) * (opts.softRotateMs ? 2000 : STAGGER_MS);
     this.hardRotateMs = opts.hardRotateMs || HARD_ROTATE_MS;
   }
 

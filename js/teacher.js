@@ -245,7 +245,7 @@ function startGemini() {
   for (const l of langs) segs[l] = makeSegmenter(l);
   srcSeg = makeSegmenter('ko');
   links = langs.map((lang, i) => new TranslatorLink({
-    apiKey, getToken, model, lang, glossary: cfg.glossary, wantSource: i === 0, wsUrl: WS_OVERRIDE, ...FAST,
+    apiKey, getToken, model, lang, glossary: cfg.glossary, stagger: i, wantSource: i === 0, wsUrl: WS_OVERRIDE, ...FAST,
     onText: (d) => { if (engine === 'gemini') segs[lang].push(d); },
     // The server may send the recognized speech on every language's connection: use only the first one.
     onSource: i === 0 ? (d) => { if (engine === 'gemini' && srcSeg) srcSeg.push(d); } : undefined,
