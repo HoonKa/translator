@@ -55,7 +55,12 @@ export class FreeEngine {
     const loud = w.reduce((a, b) => a + b, 0);
     const now = Date.now();
     // Speaking for at least 2.5 of the last 5 s, but no result for 5 s: recognition went deaf.
-    if (loud >= 25 && now - (this.lastResultAt || 0) > 5000 && now - (this.lastKickAt || 0) > 6000) {
+    // A fresh recognition session needs a few seconds before its first result, and restarting it
+    // again too soon keeps it deaf. So: wait 5 s without results, give each new session at least
+    // 10 s, and wait longer after each restart that did not help.
+    const grace = Math.min(30000, 10000 * 2 ** Math.max(0, (this.kicksInRow || 0) - 1));
+    if (loud >= 25 && now - (this.lastResultAt || 0) > 5000 && now - (this.startedAt || 0) > (this.kicksInRow ? grace : 5000)) {
+      this.kicksInRow = (this.kicksInRow || 0) + 1;
       this.lastKickAt = now; this.kicks = (this.kicks || 0) + 1;
       this._log(`free: 말하는 중인데 5초간 인식 결과 없음 -> 음성 인식 다시 시작 (${this.kicks}번째)`);
       this.deafSince = this.deafSince || (this.lastResultAt || now);
@@ -77,6 +82,7 @@ export class FreeEngine {
     rec.onstart = () => { this.stopping = false; this.startedAt = Date.now(); this.failures = 0; this.lastResultAt = Math.max(this.lastResultAt || 0, Date.now() - 3000); this._status('live'); };
     rec.onresult = (ev) => {
       this.lastResultAt = Date.now();
+      this.kicksInRow = 0;
       if (this.deafSince) { this._log(`free: 인식 다시 됨 (${((this.lastResultAt - this.deafSince) / 1000).toFixed(1)}초 동안 멈췄음)`); this.deafSince = 0; }
       let interim = '';
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
@@ -86,14 +92,6 @@ export class FreeEngine {
         if (r.isFinal) this._final(t); else interim += (interim ? ' ' : '') + t;
       }
       this._interim(interim);
-      // Chrome's recognition gets slower the longer one session runs. Start a fresh one
-      // right after a finished sentence (about every 30 s), or when a sentence never ends.
-      const age = Date.now() - (this.startedAt || Date.now());
-      const finished = !interim;
-      if ((age > 30000 && finished) || (age > 60000 && interim.length > 120)) {
-        if (!this.stopping) { this.stopping = true; this._log(`free: 음성 인식 주기적 재시작 (${Math.round(age / 1000)}초 사용)`); }
-        try { rec.stop(); } catch {}
-      }
     };
     rec.onerror = (ev) => {
       if (ev.error === 'no-speech' || ev.error === 'aborted') return;
