@@ -64,7 +64,10 @@ export class FreeEngine {
       this.lastKickAt = now; this.startedAt = now; this.kicks = (this.kicks || 0) + 1;
       this._log(`free: 말하는 중인데 5초간 인식 결과 없음 -> 음성 인식 다시 시작 (${this.kicks}번째)`);
       this.deafSince = this.deafSince || (this.lastResultAt || now);
-      try { this.rec.abort(); } catch {}
+      // Ask politely first (keeps words already heard); force it if it does not end within 1 s.
+      const rec = this.rec;
+      try { rec.stop(); } catch {}
+      setTimeout(() => { if (this.rec === rec) { try { rec.abort(); } catch {} } }, 1000);
     }
   }
   stop() {
