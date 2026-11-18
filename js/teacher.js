@@ -410,15 +410,16 @@ async function start() {
     audioMt = new AudioTranslator({
       tokenUrl, password, apiKey: key, glossary: gl,
       getLangs: () => activeLangs(), getTopic: () => $('topic').value.trim(),
-      onCut: () => { if (free) free.resetPreview(); },
+      onCut: () => (free ? free.takePreview() : ''),
+      onFallback: (t) => { if (free) free.emitText(t); },
       onResult: (src, tr) => {
         emitPartial('ko', ''); emitFinal('ko', src);
         for (const l of activeLangs()) if (tr[l]) { emitPartial(l, ''); emitFinal(l, tr[l]); }
       },
       onStatus: (ok, why) => {
         remoteOk = ok;
-        if (free) free.previewOnly = ok;   // while Gemini rests, Chrome's own sentences are used
         if (ok) msg('Gemini 녹음 번역이 다시 돼요.', 'info', 'modeMsg');
+        else if (/예전 버전/.test(why || '')) msg('키 서버 코드가 예전 버전이라 녹음 번역을 쓸 수 없어요. 이번 수업은 크롬 받아쓰기로 계속하고, 원문과 자막은 그대로 저장돼요. (관리자: 키 서버에 새 worker.js를 붙여넣어 주세요)', 'warn', 'modeMsg');
         else msg(`Gemini 녹음 번역이 잠시 안 돼요 (${String(why || '').slice(0, 80)}). 그동안 크롬 받아쓰기로 대신하고 자동으로 다시 시도해요.`, 'warn', 'modeMsg');
         updateAiStatus();
       },

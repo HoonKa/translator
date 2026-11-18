@@ -13,7 +13,7 @@ const MAX_CHUNKS = 150;     // 15 s at most per piece
 const NAMES = { en: 'English', my: 'Burmese (Myanmar script)', vi: 'Vietnamese', mn: 'Mongolian (Cyrillic)', uz: 'Uzbek (Latin script)' };
 
 export class AudioTranslator {
-  /** opts: { tokenUrl, password, apiKey, glossary, getLangs(), getTopic(), onResult(source, translations), onCut(), onStatus(ok, why), onLog } */
+  /** opts: { tokenUrl, password, apiKey, glossary, getLangs(), getTopic(), onResult(source, translations), onCut() -> Chrome's text for the piece, onFallback(text), onStatus(ok, why), onLog } */
   constructor(opts) {
     Object.assign(this, opts);
     this.pre = []; this.seg = null; this.seq = 0; this.nextOut = 1; this.done = new Map();
@@ -39,12 +39,13 @@ export class AudioTranslator {
   cut() {
     const s = this.seg; this.seg = null;
     if (!s || s.voiced < MIN_VOICED) return;
-    this.onCut && this.onCut();
-    if (!this.up) return;                    // Gemini is resting: the Chrome fallback covers this piece
-    this._send(++this.seq, wav(s.chunks));
+    const fb = (this.onCut && this.onCut()) || '';
+    const id = ++this.seq;
+    if (!this.up) { this._deliver(id, { fallback: fb }); return; }   // Gemini is resting: use Chrome's text
+    this._send(id, wav(s.chunks), fb);
   }
 
-  async _send(id, audio) {
+  async _send(id, audio, fb) {
     const langs = this.getLangs();
     const topic = (this.getTopic && this.getTopic()) || '';
     let res = null;
@@ -52,7 +53,7 @@ export class AudioTranslator {
     const t0 = Date.now();
     try {
       res = this.tokenUrl && this.password ? await this._viaServer(audio, langs, topic) : await this._direct(audio, langs, topic);
-      if (res.token) throw new Error('키 서버 코드가 예전 버전이에요 (녹음 번역을 몰라요)');
+      if (res.token) { const e = new Error('키 서버 코드가 예전 버전이에요 (녹음 번역을 몰라요)'); e.old = true; throw e; }
       if (res.error) { const e = new Error(res.error); e.quota = !!res.quota || /quota|exhausted|rate/i.test(res.error); throw e; }
       this.fails = 0;
       if (this.wasDown) { this.wasDown = false; this.onStatus && this.onStatus(true); }
@@ -60,17 +61,22 @@ export class AudioTranslator {
     } catch (e) {
       const wait = Math.min(300000, 30000 * 2 ** this.fails);
       this.fails++;
-      this.downUntil = Date.now() + (e.quota ? wait : Math.min(wait, 15000));
+      const already = this.wasDown && Date.now() < this.downUntil;
+      this.downUntil = e.old ? Infinity : Date.now() + (e.quota ? wait : Math.min(wait, 15000));
       this.wasDown = true;
-      this._log(`audio: Gemini 녹음 번역 실패 (${e.message}). ${Math.round((this.downUntil - Date.now()) / 1000)}초 동안 크롬 받아쓰기로 대신해요`);
-      this.onStatus && this.onStatus(false, e.message);
-      res = null;
+      this._log(`audio: Gemini 녹음 번역 실패 (${e.message}). ${e.old ? '이번 수업은' : Math.round((this.downUntil - Date.now()) / 1000) + '초 동안'} 크롬 받아쓰기로 대신해요`);
+      if (!already) this.onStatus && this.onStatus(false, e.message);
+      res = { fallback: fb };
     }
-    // Hand results out in the order the pieces were spoken.
+    this._deliver(id, res);
+  }
+  // Hand results out in the order the pieces were spoken.
+  _deliver(id, res) {
     this.done.set(id, res);
     while (this.done.has(this.nextOut)) {
       const r = this.done.get(this.nextOut); this.done.delete(this.nextOut); this.nextOut++;
-      if (r && (r.source || '').trim()) {
+      if (r && r.fallback !== undefined) { if (r.fallback) this.onFallback && this.onFallback(r.fallback); }
+      else if (r && (r.source || '').trim()) {
         this.context = (this.context + ' ' + r.source).slice(-500);
         this.onResult(r.source.trim(), r.translations || {});
       }

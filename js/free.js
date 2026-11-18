@@ -190,10 +190,20 @@ export class FreeEngine {
   _flushSentence() {
     const t = (this.sent || '').trim();
     this.sent = '';
-    if (t && !this.previewOnly) this._final(t);
+    if (!t) return;
+    if (this.previewOnly) this.held = (this.held ? this.held + ' ' : '') + t;   // kept in case Gemini fails
+    else this._final(t);
   }
   /** Recording mode: Gemini finished this stretch of speech, so forget what Chrome collected for it. */
-  resetPreview() { this.sent = ''; }
+  resetPreview() { this.sent = ''; this.held = ''; }
+  /** Recording mode: hand over what Chrome heard for the piece just cut (used if Gemini fails). */
+  takePreview() {
+    const t = [this.held, this.sent].filter(Boolean).join(' ').trim();
+    this.held = ''; this.sent = '';
+    return t;
+  }
+  /** Show and translate a sentence as if Chrome had just finished it. */
+  emitText(t) { if (t && t.trim()) this._final(t.trim()); }
   _interim(ko) {
     this.pendingNow = ko;
     if (this.sent) ko = this.sent + (ko ? ' ' + ko : '');
