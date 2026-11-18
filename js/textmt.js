@@ -12,6 +12,9 @@ export class SentenceTranslator {
   /** Returns { lang: text }. Throws Error (e.quota = true when it is a usage limit). */
   async translate(text, langs, context = '') {
     this.requests++;
+    // The class topic helps Gemini fix technical terms the speech recognizer misheard.
+    const topic = (this.getTopic && this.getTopic()) || '';
+    if (topic) context = `[Class topic: ${topic}. Speech recognition often mishears technical terms (English terms may be written in Korean letters); interpret them to fit this topic.] ${context}`;
     const j = this.tokenUrl && this.password ? await this._viaServer(text, langs, context) : await this._direct(text, langs, context);
     if (j.error || !j.translations) { const e = new Error(j.error || 'no translation'); e.quota = !!j.quota || /quota|exhausted|rate/i.test(j.error || ''); throw e; }
     return j.translations;

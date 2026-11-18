@@ -63,6 +63,7 @@ async function translate(env, body) {
     'Do not add explanations. Return JSON with one key per language code.\n' +
     `Languages: ${langs.map(l => `${l} = ${NAMES[l] || l}`).join(', ')}\n` +
     (gloss ? `Glossary (use these exact translations/spellings):\n${gloss}\n` : '') +
+    (body.topic ? `Class topic: ${String(body.topic).slice(0, 200)} (use it to fix misheard technical terms)\n` : '') +
     (body.context ? `Previous text (context only, do not translate): ${String(body.context).slice(0, 600)}\n` : '') +
     `NEW TEXT: ${text}`;
   const schema = { type: 'OBJECT', properties: Object.fromEntries(langs.map(l => [l, { type: 'STRING' }])), required: langs };

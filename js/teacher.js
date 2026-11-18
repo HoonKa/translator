@@ -399,7 +399,7 @@ async function start() {
   if (mode === 'hybrid') {
     engine = 'free';
     geminiRetryAt = Infinity;
-    startFree(cred ? new SentenceTranslator({ tokenUrl, password, apiKey: tokenUrl && password ? '' : apiKey, glossary: cfg.glossary }) : null);
+    startFree(cred ? new SentenceTranslator({ tokenUrl, password, apiKey: tokenUrl && password ? '' : apiKey, glossary: cfg.glossary, getTopic: () => $('topic').value.trim() }) : null);
     if (!cred) msg('이 브라우저에는 수업 비밀번호가 저장돼 있지 않아서 크롬 번역만 써요 (영어·베트남어). ⚙️ 관리자 설정에 비밀번호를 넣어 주세요.', 'warn', 'modeMsg');
   } else if (mode === 'free' || (mode === 'auto' && !cred)) {
     engine = 'free';
@@ -637,6 +637,8 @@ async function init() {
   if (store.get('modeV2') !== '1') { if (store.get('mode', 'auto') === 'auto') store.set('mode', 'hybrid'); store.set('modeV2', '1'); }
   $('mode').value = store.get('mode', 'hybrid');
   $('glossary').value = store.get('glossary', '');
+  $('topic').value = store.get('topic', '');
+  $('topic').addEventListener('input', () => store.set('topic', $('topic').value));
   renderLangs();
   renderMics();
   navigator.mediaDevices?.addEventListener?.('devicechange', renderMics);

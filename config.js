@@ -13,4 +13,4 @@ window.FIREBASE_CONFIG = {
 window.TOKEN_URL = "https://translatorkey.hookweb-f85.workers.dev";
 
 // Translate only the languages students have chosen on their phones (needs the 'viewers' database rule).
-window.ON_DEMAND = false;
+window.ON_DEMAND = true;
