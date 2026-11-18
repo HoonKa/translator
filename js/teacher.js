@@ -294,6 +294,7 @@ function syncLangs(now = Date.now()) {
   }
 }
 function showViewers() {
+  if (!onDemand()) { $('viewers').textContent = ''; return; }
   const counts = {};
   for (const l of Object.values(viewers)) counts[l] = (counts[l] || 0) + 1;
   const names = { en: '영어', my: '미얀마어', vi: '베트남어', mn: '몽골어', uz: '우즈베크어', ko: '원문' };
