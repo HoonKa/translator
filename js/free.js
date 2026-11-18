@@ -48,11 +48,17 @@ export class FreeEngine {
   /** Called with every mic chunk: restarts speech recognition if it went deaf while the teacher speaks. */
   noteAudio(rms) {
     if (!this.running || !this.rec) return;
-    if (rms >= 0.02) this.speech = (this.speech || 0) + 1;
+    // Loud chunks in the last 5 s (50 chunks of 100 ms).
+    const w = this.win || (this.win = []);
+    w.push(rms >= 0.02 ? 1 : 0);
+    if (w.length > 50) w.shift();
+    const loud = w.reduce((a, b) => a + b, 0);
     const now = Date.now();
-    if (this.speech >= 80 && now - (this.lastResultAt || 0) > 12000 && now - (this.lastKickAt || 0) > 20000) {
-      this.lastKickAt = now; this.speech = 0;
-      this._log('free: no speech results while speaking, restarting recognition');
+    // Speaking for at least 2.5 of the last 5 s, but no result for 5 s: recognition went deaf.
+    if (loud >= 25 && now - (this.lastResultAt || 0) > 5000 && now - (this.lastKickAt || 0) > 6000) {
+      this.lastKickAt = now; this.kicks = (this.kicks || 0) + 1;
+      this._log(`free: 말하는 중인데 5초간 인식 결과 없음 -> 음성 인식 다시 시작 (${this.kicks}번째)`);
+      this.deafSince = this.deafSince || (this.lastResultAt || now);
       try { this.rec.abort(); } catch {}
     }
   }
@@ -68,9 +74,10 @@ export class FreeEngine {
     rec.lang = this.srcLang === 'en' ? 'en-US' : 'ko-KR';
     rec.continuous = true;
     rec.interimResults = true;
-    rec.onstart = () => { this.startedAt = Date.now(); this.failures = 0; this.lastResultAt = Date.now(); this.speech = 0; this._status('live'); };
+    rec.onstart = () => { this.stopping = false; this.startedAt = Date.now(); this.failures = 0; this.lastResultAt = Math.max(this.lastResultAt || 0, Date.now() - 3000); this._status('live'); };
     rec.onresult = (ev) => {
-      this.lastResultAt = Date.now(); this.speech = 0;
+      this.lastResultAt = Date.now();
+      if (this.deafSince) { this._log(`free: 인식 다시 됨 (${((this.lastResultAt - this.deafSince) / 1000).toFixed(1)}초 동안 멈췄음)`); this.deafSince = 0; }
       let interim = '';
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const r = ev.results[i];
@@ -84,6 +91,7 @@ export class FreeEngine {
       const age = Date.now() - (this.startedAt || Date.now());
       const finished = !interim;
       if ((age > 30000 && finished) || (age > 60000 && interim.length > 120)) {
+        if (!this.stopping) { this.stopping = true; this._log(`free: 음성 인식 주기적 재시작 (${Math.round(age / 1000)}초 사용)`); }
         try { rec.stop(); } catch {}
       }
     };

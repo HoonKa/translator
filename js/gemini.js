@@ -28,9 +28,9 @@ const SILENT_RMS = 0.012;
 // Stall guard: sometimes a connection stays open but stops sending captions.
 // If the teacher has been speaking for a while and nothing came back, open a fresh one.
 const SPEECH_RMS = 0.02;
-const STALL_SPEECH_CHUNKS = 80;          // 8 s of speech with no caption
-const STALL_MIN_GAP_MS = 12000;          // and at least 12 s since the last caption
-const STALL_COOLDOWN_MS = 30000;         // at most one stall restart per 30 s
+const STALL_SPEECH_CHUNKS = 40;          // 4 s of speech with no caption
+const STALL_MIN_GAP_MS = 6000;           // and at least 6 s since the last caption
+const STALL_COOLDOWN_MS = 15000;         // at most one stall restart per 15 s
 
 // The docs show translationConfig / transcription settings in slightly
 // different places, so we try these in order and remember what works.
