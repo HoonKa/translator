@@ -4,6 +4,7 @@ import { Segmenter } from './captions.js';
 import { createRelay } from './relay.js';
 import { FreeEngine, prepareTranslators, freeModeSupport } from './free.js';
 import { SentenceTranslator } from './textmt.js';
+import { AudioTranslator } from './audiomt.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -311,6 +312,7 @@ function stopGemini() {
   segs = {}; srcSeg = null;
 }
 let remoteOk = true;
+let audioMt = null;   // recording mode
 function startFree(remote = null) {
   remoteOk = true;
   free = new FreeEngine({
@@ -396,7 +398,34 @@ async function start() {
     msg('이 브라우저에는 수업 비밀번호가 저장돼 있지 않아요. 휴대폰에서는 무료 크롬 번역을 쓸 수 없어서, 관리자에게 받은 설정 링크를 이 브라우저에서 먼저 열어 주세요.', 'bad', 'modeMsg');
     return;
   }
-  if (mode === 'hybrid') {
+  if (mode === 'record' && cred) {
+    engine = 'free';
+    geminiRetryAt = Infinity;
+    const gl = cfg.glossary, key = tokenUrl && password ? '' : apiKey;
+    // Chrome recognition only shows a quick preview (and takes over while Gemini is unavailable).
+    if (freeModeSupport().speech) {
+      startFree(new SentenceTranslator({ tokenUrl, password, apiKey: key, glossary: gl, getTopic: () => $('topic').value.trim() }));
+      free.previewOnly = true;
+    }
+    audioMt = new AudioTranslator({
+      tokenUrl, password, apiKey: key, glossary: gl,
+      getLangs: () => activeLangs(), getTopic: () => $('topic').value.trim(),
+      onCut: () => { if (free) free.resetPreview(); },
+      onResult: (src, tr) => {
+        emitPartial('ko', ''); emitFinal('ko', src);
+        for (const l of activeLangs()) if (tr[l]) { emitPartial(l, ''); emitFinal(l, tr[l]); }
+      },
+      onStatus: (ok, why) => {
+        remoteOk = ok;
+        if (free) free.previewOnly = ok;   // while Gemini rests, Chrome's own sentences are used
+        if (ok) msg('Gemini 녹음 번역이 다시 돼요.', 'info', 'modeMsg');
+        else msg(`Gemini 녹음 번역이 잠시 안 돼요 (${String(why || '').slice(0, 80)}). 그동안 크롬 받아쓰기로 대신하고 자동으로 다시 시도해요.`, 'warn', 'modeMsg');
+        updateAiStatus();
+      },
+      onLog: log,
+    });
+    updateAiStatus();
+  } else if (mode === 'hybrid' || mode === 'record') {
     engine = 'free';
     geminiRetryAt = Infinity;
     startFree(cred ? new SentenceTranslator({ tokenUrl, password, apiKey: tokenUrl && password ? '' : apiKey, glossary: cfg.glossary, getTopic: () => $('topic').value.trim() }) : null);
@@ -423,6 +452,7 @@ async function start() {
 }
 
 async function stop() {
+  if (audioMt) { audioMt.cut(); audioMt = null; }
   running = false;
   note('_stop');
   msg('수업을 마쳤어요. 오늘 자막을 파일로 남기려면 [📄 자막 저장]을 누르세요.', 'info', 'modeMsg');
@@ -442,6 +472,7 @@ async function stop() {
 function onChunk({ b64, rms }) {
   const now = Date.now();
   for (const l of links) l.sendAudio(b64, rms);
+  if (audioMt) audioMt.push(b64, rms);
   if (free) free.noteAudio(rms);
   for (const s of Object.values(segs)) s.tick(now);
   if (srcSeg) srcSeg.tick(now);
@@ -512,10 +543,11 @@ async function onMicEnded() {
 
 function updateAiStatus() {
   if (!running && !links.length && !free) return;
+  if (engine === 'free' && audioMt && !free) { setDot('aiDot', 'aiState', remoteOk ? 'ok' : 'warn', remoteOk ? '번역 중 (녹음+Gemini)' : 'Gemini 대기 중'); return; }
   if (engine === 'free' && free) {
     const st = free.state;
     if (st === 'error') { setDot('aiDot', 'aiState', 'bad', '무료 번역 오류'); msg(`무료 번역 오류: ${free.detail}`, 'bad', 'aiErr'); }
-    else setDot('aiDot', 'aiState', st === 'live' ? 'ok' : 'warn', st === 'live' ? (free.remote ? (remoteOk ? '번역 중 (크롬+Gemini)' : '번역 중 (크롬만, Gemini 대기)') : '번역 중 (무료 크롬)') : '다시 연결 중 (크롬)');
+    else setDot('aiDot', 'aiState', st === 'live' ? 'ok' : 'warn', st === 'live' ? (audioMt ? (remoteOk ? '번역 중 (녹음+Gemini)' : '번역 중 (크롬, Gemini 대기)') : free.remote ? (remoteOk ? '번역 중 (크롬+Gemini)' : '번역 중 (크롬만, Gemini 대기)') : '번역 중 (무료 크롬)') : '다시 연결 중 (크롬)');
     return;
   }
   const states = links.map(l => l.state);

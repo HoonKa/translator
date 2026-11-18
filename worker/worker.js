@@ -10,6 +10,7 @@
 // Requests (POST JSON, always with "password"):
 //   {}                                         -> { token }  single-use Gemini Live token
 //   { action: "translate", text, langs, glossary, context } -> { translations: { en: "...", ... } }
+//   { action: "audio", audio (base64 WAV), langs, glossary, topic, context } -> { source, translations }
 export default {
   async fetch(req, env) {
     const origin = req.headers.get('Origin') || '';
@@ -32,6 +33,7 @@ export default {
     if (!(await same(String(body.password || ''), env.CLASS_PASSWORD))) return json({ error: 'wrong password' }, 401);
 
     if (body.action === 'translate') return json(await translate(env, body), 200);
+    if (body.action === 'audio') return json(await translate(env, body, true), 200);
 
     const now = Date.now();
     const r = await fetch('https://generativelanguage.googleapis.com/v1beta/auth_tokens', {
@@ -52,12 +54,24 @@ export default {
 const NAMES = { en: 'English', my: 'Burmese (Myanmar script)', vi: 'Vietnamese', mn: 'Mongolian (Cyrillic)', uz: 'Uzbek (Latin script)', ja: 'Japanese', 'zh-Hans': 'Simplified Chinese' };
 
 // One request translates one classroom sentence into every language the students read.
-async function translate(env, body) {
+// With audio: Gemini writes down what was said (source) and translates it in the same request.
+async function translate(env, body, withAudio = false) {
   const text = String(body.text || '').slice(0, 2000);
+  const audio = withAudio ? String(body.audio || '') : '';
   const langs = (Array.isArray(body.langs) ? body.langs : []).filter(l => /^[a-zA-Z-]{2,8}$/.test(l)).slice(0, 8);
-  if (!text || !langs.length) return { translations: {} };
+  if (withAudio && (!audio || audio.length > 2_000_000)) return { error: 'bad audio' };
+  if ((!withAudio && !text) || !langs.length) return { translations: {} };
   const gloss = (Array.isArray(body.glossary) ? body.glossary : []).slice(0, 100).map(g => `${g.src} => ${g.dst}`).join('\n');
-  const prompt =
+  const prompt = withAudio ? (
+    'The audio is a short piece of a teacher speaking in a classroom (Korean, sometimes English or mixed). ' +
+    'Write down exactly what was said in the original language as "source" (keep English technical terms in English letters). ' +
+    'If there is no clear speech, return an empty source and empty translations. Then translate the source faithfully and naturally ' +
+    'into each language below. Do not add explanations.\n' +
+    `Languages: ${langs.map(l => `${l} = ${NAMES[l] || l}`).join(', ')}\n` +
+    (gloss ? `Glossary (use these exact spellings/translations):\n${gloss}\n` : '') +
+    (body.topic ? `Class topic: ${String(body.topic).slice(0, 200)} (use it to get technical terms right)\n` : '') +
+    (body.context ? `What the teacher said just before (context only): ${String(body.context).slice(0, 600)}\n` : '')
+  ) : (
     'You translate a teacher\'s speech in a classroom (Korean or English, recognized by speech-to-text, may contain small recognition errors) ' +
     'into other languages for students. Translate the NEW TEXT faithfully and naturally, fixing obvious recognition errors from context. ' +
     'Do not add explanations. Return JSON with one key per language code.\n' +
@@ -65,8 +79,10 @@ async function translate(env, body) {
     (gloss ? `Glossary (use these exact translations/spellings):\n${gloss}\n` : '') +
     (body.topic ? `Class topic: ${String(body.topic).slice(0, 200)} (use it to fix misheard technical terms)\n` : '') +
     (body.context ? `Previous text (context only, do not translate): ${String(body.context).slice(0, 600)}\n` : '') +
-    `NEW TEXT: ${text}`;
-  const schema = { type: 'OBJECT', properties: Object.fromEntries(langs.map(l => [l, { type: 'STRING' }])), required: langs };
+    `NEW TEXT: ${text}`);
+  const keys = withAudio ? ['source', ...langs] : langs;
+  const schema = { type: 'OBJECT', properties: Object.fromEntries(keys.map(l => [l, { type: 'STRING' }])), required: keys };
+  const parts = withAudio ? [{ inlineData: { mimeType: 'audio/wav', data: audio } }, { text: prompt }] : [{ text: prompt }];
   const models = (env.TEXT_MODEL || 'gemini-flash-lite-latest,gemini-flash-latest').split(',').map(s => s.trim());
   let last = '';
   for (const model of models) {
@@ -76,11 +92,16 @@ async function translate(env, body) {
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig }),
+        body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig }),
       });
       const j = await r.json().catch(() => ({}));
       if (r.ok) {
-        try { return { translations: JSON.parse(j.candidates[0].content.parts.map(p => p.text || '').join('')), model }; }
+        try {
+          const out = JSON.parse(j.candidates[0].content.parts.map(p => p.text || '').join(''));
+          if (!withAudio) return { translations: out, model };
+          const { source, ...translations } = out;
+          return { source: source || '', translations, model };
+        }
         catch { return { error: 'bad model output', model }; }
       }
       last = (j.error && j.error.message) || `HTTP ${r.status}`;

@@ -190,8 +190,10 @@ export class FreeEngine {
   _flushSentence() {
     const t = (this.sent || '').trim();
     this.sent = '';
-    if (t) this._final(t);
+    if (t && !this.previewOnly) this._final(t);
   }
+  /** Recording mode: Gemini finished this stretch of speech, so forget what Chrome collected for it. */
+  resetPreview() { this.sent = ''; }
   _interim(ko) {
     this.pendingNow = ko;
     if (this.sent) ko = this.sent + (ko ? ' ' + ko : '');
