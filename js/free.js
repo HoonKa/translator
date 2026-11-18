@@ -26,7 +26,7 @@ export function prepareTranslators(langs, src = 'ko', onProgress) {
 }
 
 export class FreeEngine {
-  /** opts: { langs, glossary: [{src,dst}], translators (from prepareTranslators), onPartial(lang,t), onFinal(lang,t), onStatus(state, detail), onLog } */
+  /** opts: { langs, remote (SentenceTranslator, optional), onRemote(ok, why), glossary: [{src,dst}], translators (from prepareTranslators), onPartial(lang,t), onFinal(lang,t), onStatus(state, detail), onLog } */
   constructor(opts) {
     Object.assign(this, opts);
     this.running = false;
@@ -121,9 +121,47 @@ export class FreeEngine {
     this.seq++;
     this.onFinal('ko', ko);
     this.onPartial('ko', '');
+    if (this.remote) { this.queue = (this.queue || []).concat(ko); this._pump(); return; }
     for (const l of this.langs) {
       this._translate(l, ko).then((en) => { if (en) { this.onFinal(l, en); this.onPartial(l, ''); } });
     }
+  }
+  // Gemini text translation: one request per finished sentence (sentences that pile up while a
+  // request is running are sent together). If Gemini is unavailable, Chrome's translator fills in.
+  async _pump() {
+    if (this.busy || !this.queue || !this.queue.length || !this.running) return;
+    const now = Date.now();
+    const text = this.queue.join(' ');
+    this.queue = [];
+    const langs = [...this.langs];
+    const useRemote = now >= (this.remoteDownUntil || 0);
+    this.busy = true;
+    let out = null;
+    if (useRemote) {
+      try {
+        const t0 = Date.now();
+        out = await this.remote.translate(text, langs, this.context || '');
+        this.remoteFails = 0;
+        if (this.remoteWasDown) { this._log('free: Gemini 글 번역 다시 됨'); this.remoteWasDown = false; this.onRemote && this.onRemote(true); }
+        if (Date.now() - t0 > 4000) this._log(`free: Gemini 글 번역이 느려요 (${((Date.now() - t0) / 1000).toFixed(1)}초)`);
+      } catch (e) {
+        const wait = Math.min(300000, 30000 * 2 ** (this.remoteFails || 0));
+        this.remoteFails = (this.remoteFails || 0) + 1;
+        this.remoteDownUntil = Date.now() + (e.quota ? wait : Math.min(wait, 10000));
+        this.remoteWasDown = true;
+        this._log(`free: Gemini 글 번역 실패 (${e.message}). ${Math.round((this.remoteDownUntil - Date.now()) / 1000)}초 동안 크롬 번역 사용`);
+        this.onRemote && this.onRemote(false, e.message);
+      }
+    }
+    for (const l of langs) {
+      let t = out && out[l];
+      if (!t) t = await this._translate(l, text);   // Chrome fallback (English/Vietnamese only)
+      if (t) { this.onFinal(l, t); this.onPartial(l, ''); }
+    }
+    this.context = (this.context ? this.context + ' ' : '') + text;
+    if (this.context.length > 500) this.context = this.context.slice(-500);
+    this.busy = false;
+    if (this.queue.length) this._pump();
   }
   _interim(ko) {
     this.onPartial('ko', ko);

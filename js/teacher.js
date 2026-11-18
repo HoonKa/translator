@@ -3,6 +3,7 @@ import { TranslatorLink, TRANSLATE_MODEL } from './gemini.js';
 import { Segmenter } from './captions.js';
 import { createRelay } from './relay.js';
 import { FreeEngine, prepareTranslators, freeModeSupport } from './free.js';
+import { SentenceTranslator } from './textmt.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -309,9 +310,17 @@ function stopGemini() {
   if (srcSeg) srcSeg.flush();
   segs = {}; srcSeg = null;
 }
-function startFree() {
+let remoteOk = true;
+function startFree(remote = null) {
+  remoteOk = true;
   free = new FreeEngine({
-    langs: activeLangs(), glossary: cfg.glossary, translators, srcLang: srcLang(),
+    langs: activeLangs(), glossary: cfg.glossary, translators, srcLang: srcLang(), remote,
+    onRemote: (ok, why) => {
+      remoteOk = ok;
+      if (ok) msg('Gemini 글 번역이 다시 돼요.', 'info', 'modeMsg');
+      else msg(`Gemini 글 번역이 잠시 안 돼요 (${String(why || '').slice(0, 80)}). 그동안 영어·베트남어는 크롬 번역으로 나가고, 자동으로 다시 시도해요.`, 'warn', 'modeMsg');
+      updateAiStatus();
+    },
     onPartial: (l, t) => { if (engine === 'free') emitPartial(l, t); },
     onFinal: (l, t) => { if (engine === 'free') emitFinal(l, t); },
     onStatus: () => updateAiStatus(),
@@ -344,6 +353,9 @@ async function start() {
   if (mode === 'gemini' && !cred) { msg('관리자 설정에서 키 서버 주소와 비밀번호(또는 API 키)를 먼저 넣어 주세요.', 'warn', 'keyMsg'); $('adminBox').open = true; return; }
   if (mode !== 'gemini') {
     const sup = freeModeSupport();
+    if (mode === 'hybrid' && !sup.speech) {
+      msg('이 브라우저는 음성 인식을 지원하지 않아요. 크롬이나 엣지를 써 주세요.', 'bad', 'keyMsg'); return;
+    }
     if (mode === 'free' && (!sup.speech || !sup.translator)) {
       msg('이 브라우저는 무료 모드를 지원하지 않아요. 최신 크롬(138 이상)이나 엣지를 써 주세요.', 'bad', 'keyMsg'); return;
     }
@@ -384,7 +396,12 @@ async function start() {
     msg('이 브라우저에는 수업 비밀번호가 저장돼 있지 않아요. 휴대폰에서는 무료 크롬 번역을 쓸 수 없어서, 관리자에게 받은 설정 링크를 이 브라우저에서 먼저 열어 주세요.', 'bad', 'modeMsg');
     return;
   }
-  if (mode === 'free' || (mode === 'auto' && !cred)) {
+  if (mode === 'hybrid') {
+    engine = 'free';
+    geminiRetryAt = Infinity;
+    startFree(cred ? new SentenceTranslator({ tokenUrl, password, apiKey: tokenUrl && password ? '' : apiKey, glossary: cfg.glossary }) : null);
+    if (!cred) msg('이 브라우저에는 수업 비밀번호가 저장돼 있지 않아서 크롬 번역만 써요 (영어·베트남어). ⚙️ 관리자 설정에 비밀번호를 넣어 주세요.', 'warn', 'modeMsg');
+  } else if (mode === 'free' || (mode === 'auto' && !cred)) {
     engine = 'free';
     geminiRetryAt = Infinity;
     startFree();
@@ -498,7 +515,7 @@ function updateAiStatus() {
   if (engine === 'free' && free) {
     const st = free.state;
     if (st === 'error') { setDot('aiDot', 'aiState', 'bad', '무료 번역 오류'); msg(`무료 번역 오류: ${free.detail}`, 'bad', 'aiErr'); }
-    else setDot('aiDot', 'aiState', st === 'live' ? 'ok' : 'warn', st === 'live' ? '번역 중 (무료 크롬)' : '다시 연결 중 (무료)');
+    else setDot('aiDot', 'aiState', st === 'live' ? 'ok' : 'warn', st === 'live' ? (free.remote ? (remoteOk ? '번역 중 (크롬+Gemini)' : '번역 중 (크롬만, Gemini 대기)') : '번역 중 (무료 크롬)') : '다시 연결 중 (크롬)');
     return;
   }
   const states = links.map(l => l.state);
@@ -648,7 +665,7 @@ async function init() {
     if (running && free) {
       // Restart the free engine with the new speaking language (the click lets the browser load translators).
       translators = prepareTranslators(cfg.langs, srcLang());
-      free.stop(); free = null; startFree();
+      const remote = free.remote; free.stop(); free = null; startFree(remote);
     }
   };
   $('setupLinkBtn').onclick = () => {
