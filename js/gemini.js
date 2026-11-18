@@ -19,12 +19,18 @@ export const CONSTRAINED_WS =
 export const TRANSLATE_MODEL = 'gemini-3.5-live-translate-preview';
 export const GENERAL_MODEL = 'gemini-3.8-live';
 
-const SOFT_ROTATE_MS = 7.5 * 60 * 1000;  // after this, switch at the next pause
-const HARD_ROTATE_MS = 9 * 60 * 1000;    // switch now, even mid-sentence
+const SOFT_ROTATE_MS = 5 * 60 * 1000;  // after this, switch at the next pause (short sessions stay fast)
+const HARD_ROTATE_MS = 7 * 60 * 1000;    // switch now, even mid-sentence
 const SETUP_TIMEOUT_MS = 12000;
 const DRAIN_MS = 4000;                   // let the old connection finish its sentence
 const MAX_BUFFER_CHUNKS = 200;           // 20 s of audio
 const SILENT_RMS = 0.012;
+// Stall guard: sometimes a connection stays open but stops sending captions.
+// If the teacher has been speaking for a while and nothing came back, open a fresh one.
+const SPEECH_RMS = 0.02;
+const STALL_SPEECH_CHUNKS = 80;          // 8 s of speech with no caption
+const STALL_MIN_GAP_MS = 12000;          // and at least 12 s since the last caption
+const STALL_COOLDOWN_MS = 30000;         // at most one stall restart per 30 s
 
 // The docs show translationConfig / transcription settings in slightly
 // different places, so we try these in order and remember what works.
@@ -49,16 +55,22 @@ function withGlossary(variants, gloss) {
   return variants[0].setup.systemInstruction ? add : [...add, ...variants];
 }
 
+// Ask the server to drop old context as the session grows (keeps latency steady).
+// Variants without it follow in case the server does not accept the field.
+function withCompression(variants) {
+  return [...variants.map(v => ({ setup: { ...v.setup, contextWindowCompression: { slidingWindow: {} } } })), ...variants];
+}
+
 function setupVariants(model, lang, wantSource) {
   const m = `models/${model}`;
   const tr = { targetLanguageCode: lang, echoTargetLanguage: true };
   const src = wantSource ? { inputAudioTranscription: {} } : {};
   if (model.includes('translate')) {
-    return [
+    return withCompression([
       { setup: { model: m, generationConfig: { responseModalities: ['AUDIO'], ...src, outputAudioTranscription: {}, translationConfig: tr } } },
       { setup: { model: m, generationConfig: { responseModalities: ['AUDIO'], translationConfig: tr }, ...src, outputAudioTranscription: {} } },
       { setup: { model: m, generationConfig: { responseModalities: ['AUDIO'] }, translationConfig: tr, ...src, outputAudioTranscription: {} } },
-    ];
+    ]);
   }
   // General Live model used as an interpreter (waits for short pauses).
   const names = { en: 'English', ja: 'Japanese', zh: 'Chinese', 'zh-Hans': 'Simplified Chinese', es: 'Spanish', vi: 'Vietnamese', fr: 'French', de: 'German', ko: 'Korean' };
@@ -179,7 +191,7 @@ export class TranslatorLink {
     this.wsUrl = opts.wsUrl;
     this.model = opts.model || TRANSLATE_MODEL;
     const g = opts.glossary && opts.glossary.length ? '_g' : '';
-    this.variantKey = `gl_variant_${this.model}${g}`;
+    this.variantKey = `gl_variant2_${this.model}${g}`;
     this.variants = withGlossary(setupVariants(this.model, this.lang, this.wantSource), opts.glossary);
     this.variantIdx = Math.min(Number(safeGet(this.variantKey) || 0), this.variants.length - 1);
     this.active = null;
@@ -216,7 +228,9 @@ export class TranslatorLink {
     this.silentStreak = rms < SILENT_RMS ? this.silentStreak + 1 : 0;
     const a = this.active;
     if (a && a.ready && !a.closed && a.send(b64)) {
-      // sent
+      if (rms >= SPEECH_RMS) a.speechSinceOut = (a.speechSinceOut || 0) + 1;
+      (a.recent || (a.recent = [])).push(b64);
+      if (a.recent.length > 60) a.recent.shift();
     } else {
       this.buffer.push(b64);
       if (this.buffer.length > MAX_BUFFER_CHUNKS) this.buffer.shift();
@@ -244,6 +258,16 @@ export class TranslatorLink {
     const a = this.active;
     if (a) {
       const age = now - a.readyAt;
+      const quietFor = now - Math.max(a.lastOutAt || 0, a.readyAt);
+      if ((a.speechSinceOut || 0) >= STALL_SPEECH_CHUNKS && quietFor > STALL_MIN_GAP_MS && now - (this.lastStallAt || 0) > STALL_COOLDOWN_MS) {
+        this.lastStallAt = now;
+        this.stats.stalls = (this.stats.stalls || 0) + 1;
+        this._log(`conn ${a.id}: no captions for ${Math.round(quietFor / 1000)} s while speaking, opening a fresh connection`);
+        // Give the new connection the last few seconds of speech again.
+        this.buffer = (a.recent || []).slice(-60);
+        this._connect('stall');
+        return;
+      }
       const pause = this.silentStreak >= 3; // 300 ms of quiet
       if (a.goAway || age > this.hardRotateMs || (age > this.softRotateMs && pause)) {
         this.stats.rotations++;
@@ -327,6 +351,10 @@ export class TranslatorLink {
   }
 
   _emit(kind, data, conn) {
+    if (data && (kind === 'text' || kind === 'source')) {
+      if (kind === 'text' || !conn.gotText) { conn.lastOutAt = Date.now(); conn.speechSinceOut = 0; }
+      if (kind === 'text') conn.gotText = true;
+    }
     if (kind === 'text' && this.onText) this.onText(data, conn.id);
     else if (kind === 'source' && this.onSource) this.onSource(data, conn.id);
     else if (kind === 'turn' && this.onTurn) this.onTurn(conn.id);

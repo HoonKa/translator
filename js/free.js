@@ -45,6 +45,17 @@ export class FreeEngine {
     if (missing.length) this._log(`free: no built-in translator for ${missing.join(',')}`);
     this._listen();
   }
+  /** Called with every mic chunk: restarts speech recognition if it went deaf while the teacher speaks. */
+  noteAudio(rms) {
+    if (!this.running || !this.rec) return;
+    if (rms >= 0.02) this.speech = (this.speech || 0) + 1;
+    const now = Date.now();
+    if (this.speech >= 80 && now - (this.lastResultAt || 0) > 12000 && now - (this.lastKickAt || 0) > 20000) {
+      this.lastKickAt = now; this.speech = 0;
+      this._log('free: no speech results while speaking, restarting recognition');
+      try { this.rec.abort(); } catch {}
+    }
+  }
   stop() {
     this.running = false;
     try { this.rec && this.rec.abort(); } catch {}
@@ -57,8 +68,9 @@ export class FreeEngine {
     rec.lang = this.srcLang === 'en' ? 'en-US' : 'ko-KR';
     rec.continuous = true;
     rec.interimResults = true;
-    rec.onstart = () => { this.failures = 0; this._status('live'); };
+    rec.onstart = () => { this.startedAt = Date.now(); this.failures = 0; this.lastResultAt = Date.now(); this.speech = 0; this._status('live'); };
     rec.onresult = (ev) => {
+      this.lastResultAt = Date.now(); this.speech = 0;
       let interim = '';
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const r = ev.results[i];
@@ -67,6 +79,13 @@ export class FreeEngine {
         if (r.isFinal) this._final(t); else interim += (interim ? ' ' : '') + t;
       }
       this._interim(interim);
+      // Chrome's recognition gets slower the longer one session runs. Start a fresh one
+      // right after a finished sentence (about every 30 s), or when a sentence never ends.
+      const age = Date.now() - (this.startedAt || Date.now());
+      const finished = !interim;
+      if ((age > 30000 && finished) || (age > 60000 && interim.length > 120)) {
+        try { rec.stop(); } catch {}
+      }
     };
     rec.onerror = (ev) => {
       if (ev.error === 'no-speech' || ev.error === 'aborted') return;

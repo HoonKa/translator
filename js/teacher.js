@@ -47,9 +47,14 @@ function saveTranscript() {
       transcript = transcript.slice(Math.floor(transcript.length / 3));
       try { localStorage.setItem(TKEY, JSON.stringify(transcript)); } catch {}
     }
-  }, 2000);
+  }, 10000);
 }
-function note(l) { transcript.push({ t: Date.now(), l }); saveTranscript(); }
+function note(l) {
+  transcript.push({ t: Date.now(), l });
+  if (l === '_stop') { clearTimeout(tSaveTimer); tSaveTimer = 0; try { localStorage.setItem(TKEY, JSON.stringify(transcript)); } catch {} }
+  else saveTranscript();
+}
+window.addEventListener('pagehide', () => { try { localStorage.setItem(TKEY, JSON.stringify(transcript)); } catch {} });
 const live = {};       // lang -> { text, dirty, last }
 let shownLang = 'en';
 let mode = 'auto';      // 'auto' | 'gemini' | 'free'
@@ -371,6 +376,7 @@ async function stop() {
 function onChunk({ b64, rms }) {
   const now = Date.now();
   for (const l of links) l.sendAudio(b64, rms);
+  if (free) free.noteAudio(rms);
   for (const s of Object.values(segs)) s.tick(now);
   if (srcSeg) srcSeg.tick(now);
   if (running && mode === 'auto') autoSwitch(now);
