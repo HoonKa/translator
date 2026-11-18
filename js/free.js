@@ -91,6 +91,7 @@ export class FreeEngine {
         if (!t) continue;
         if (r.isFinal) this._final(t); else interim += (interim ? ' ' : '') + t;
       }
+      this.pending = interim;
       this._interim(interim);
     };
     rec.onerror = (ev) => {
@@ -103,6 +104,9 @@ export class FreeEngine {
     };
     // Chrome ends recognition after silence or about a minute: start again right away.
     rec.onend = () => {
+      // Chrome drops words it had not finished when a session ends (or is restarted): keep them.
+      if (this.pending && this.running) { this._log(`free: 끝나지 않은 말 보존: "${this.pending.slice(0, 30)}"`); this._final(this.pending); }
+      this.pending = '';
       if (!this.running) return;
       const delay = this.failures ? Math.min(5000, 300 * 2 ** this.failures) : 0;
       if (this.failures) this._status('reconnecting');
