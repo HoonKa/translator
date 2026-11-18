@@ -64,7 +64,10 @@ async function translate(env, body, withAudio = false) {
   const gloss = (Array.isArray(body.glossary) ? body.glossary : []).slice(0, 100).map(g => `${g.src} => ${g.dst}`).join('\n');
   const prompt = withAudio ? (
     'The audio is a short piece of a teacher speaking in a classroom (Korean, sometimes English or mixed). ' +
-    'Write down exactly what was said in the original language as "source" (keep English technical terms in English letters). ' +
+    'Write down every word that was said, in order, in the original language as "source". Do not skip, shorten or summarize anything. ' +
+    'The teacher often says English technical terms with Korean pronunciation (e.g. 머신러닝, 데이터셋, 트랜스포머, 파이썬): ' +
+    'recognize them as the English terms and write them in English letters (machine learning, dataset, Transformer, Python). ' +
+    'Prefer words that fit the class topic and glossary below when the sound is unclear. ' +
     'If there is no clear speech, return an empty source and empty translations. Then translate the source faithfully and naturally ' +
     'into each language below. Do not add explanations.\n' +
     `Languages: ${langs.map(l => `${l} = ${NAMES[l] || l}`).join(', ')}\n` +
@@ -83,7 +86,8 @@ async function translate(env, body, withAudio = false) {
   const keys = withAudio ? ['source', ...langs] : langs;
   const schema = { type: 'OBJECT', properties: Object.fromEntries(keys.map(l => [l, { type: 'STRING' }])), required: keys };
   const parts = withAudio ? [{ inlineData: { mimeType: 'audio/wav', data: audio } }, { text: prompt }] : [{ text: prompt }];
-  const models = (env.TEXT_MODEL || 'gemini-flash-lite-latest,gemini-flash-latest').split(',').map(s => s.trim());
+  // Audio pieces are many per minute: only use the model with the larger free daily limit for them.
+  const models = (withAudio ? (env.AUDIO_MODEL || 'gemini-flash-lite-latest') : (env.TEXT_MODEL || 'gemini-flash-lite-latest,gemini-flash-latest')).split(',').map(s => s.trim());
   let last = '';
   for (const model of models) {
     for (const thinking of [true, false]) {
