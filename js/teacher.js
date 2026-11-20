@@ -1,5 +1,5 @@
 import { startMic, listMics } from './audio.js';
-import { TranslatorLink, TRANSLATE_MODEL } from './gemini.js';
+import { TranslatorLink, TRANSLATE_MODEL, GENERAL_MODEL } from './gemini.js';
 import { Segmenter } from './captions.js';
 import { createRelay } from './relay.js';
 import { FreeEngine, prepareTranslators, freeModeSupport } from './free.js';
@@ -244,8 +244,28 @@ async function fetchToken() {
   return j.token;
 }
 
-function makeLink(lang) {
-  const { apiKey, model } = cfg;
+// Free tier: each Live model has its own tokens-per-minute limit (Live Translate 20K, 3.8 Live 65K) and
+// no daily limit. Put at most 3 languages on Live Translate and the rest on 3.8 Live so neither runs over.
+const MAX_ON_TRANSLATE = 3;
+function pickModel() {
+  if (cfg.model !== TRANSLATE_MODEL) return cfg.model;
+  return links.filter(k => k.model === TRANSLATE_MODEL).length >= MAX_ON_TRANSLATE ? GENERAL_MODEL : TRANSLATE_MODEL;
+}
+const isQuota = (d) => /한도|quota|exceeded|exhausted/i.test(d || '');
+// A Live Translate link hit the per-minute limit: move that language to 3.8 Live (separate limit).
+function movePool(k) {
+  if (k.model !== TRANSLATE_MODEL || !isQuota(k.detail)) return false;
+  const i = links.indexOf(k); if (i < 0) return false;
+  log(`[${k.lang}] Live Translate 분당 한도 -> 3.8 Live로 옮겨서 계속`);
+  k.stop();
+  const n = makeLink(k.lang, GENERAL_MODEL);
+  links.pop(); links[i] = n;   // keep its place (links[0] feeds the original text)
+  n.start();
+  return true;
+}
+function makeLink(lang, forceModel) {
+  const { apiKey } = cfg;
+  const model = forceModel || pickModel();
   const getToken = cfg.tokenUrl && cfg.password ? fetchToken : undefined;
   if (!segs[lang]) segs[lang] = makeSegmenter(lang);
   const k = new TranslatorLink({
@@ -477,6 +497,7 @@ function onChunk({ b64, rms }) {
   if (free) free.noteAudio(rms);
   for (const s of Object.values(segs)) s.tick(now);
   if (srcSeg) srcSeg.tick(now);
+  if (running && engine === 'gemini') for (const l of links.filter(l => l.state === 'error')) movePool(l);
   if (running && mode === 'auto') autoSwitch(now);
   for (const l of Object.keys(live)) if (now - live[l].last >= 100) flushLive(l, now);
   $('meter').firstElementChild.style.width = `${Math.min(100, rms * 400)}%`;
@@ -490,12 +511,14 @@ function autoSwitch(now) {
   if (engine === 'gemini' && !probing && !canFree()) {
     // Phones etc.: no built-in translator, so keep retrying Gemini instead of switching.
     for (const l of links.filter(l => l.state === 'error')) {
+      if (movePool(l)) continue;
       if (!l.retryAt) { const d = linkDelay(l); l.retryAt = now + d; log(`[${l.lang}] 오류, ${secs(d)} 뒤 다시 시도: ${l.detail}`); }
       else if (now >= l.retryAt) { l.retryAt = 0; l.start(); }
     }
     return;
   }
   if (engine === 'gemini' && !probing) {
+    for (const l of links.filter(l => l.state === 'error')) movePool(l);
     const errs = links.filter(l => l.state === 'error');
     if (links[0] && links[0].state === 'error' || (links.length && errs.length === links.length)) return switchToFree((errs[0].detail || '오류').split(' (')[0]);
     // Another language failed alone (e.g. a usage limit): keep the others running and retry it in 2 minutes.
